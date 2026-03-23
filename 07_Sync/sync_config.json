@@ -1,0 +1,20 @@
+{
+  "databricks_host": "https://adb-7405615460529826.6.azuredatabricks.net",
+  "volume_ca_path": "/Volumes/upsc_catalog/rag/obsidian_ca",
+  "volume_docs_path": "/Volumes/upsc_catalog/rag/documents",
+  "catalog": "upsc_catalog",
+  "schema": "rag",
+  "tables": {
+    "stories": "upsc_catalog.rag.stories",
+    "traps": "upsc_catalog.rag.story_traps",
+    "chunks": "upsc_catalog.rag.contextual_chunks",
+    "deep_analysis": "upsc_catalog.rag.deep_analysis",
+    "geography_context": "upsc_catalog.rag.geography_context",
+    "evaluations": "upsc_catalog.rag.answer_evaluations",
+    "essay_threads": "upsc_catalog.rag.essay_threads"
+  },
+  "local_vault_path": "~/Desktop/UPSC_2026",
+  "sync_direction": "databricks_to_local",
+  "sync_schedule": "8:15 AM IST daily (after NB6 7AM + NB7 8AM complete)",
+  "cli_profile": "upsc"
+}

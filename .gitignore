@@ -1,0 +1,13 @@
+.obsidian/workspace*
+.obsidian/cache
+.trash/
+*.DS_Store
+*.log
+*.pdf
+*.png
+*.jpg
+*.jpeg
+__pycache__/
+*.pyc
+upsc_faiss.index
+upsc_faiss_meta.pkl
