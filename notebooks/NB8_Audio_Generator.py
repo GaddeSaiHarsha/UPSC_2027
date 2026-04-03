@@ -1,4 +1,25 @@
 # Databricks notebook source
+# DBTITLE 1,NotebookLM + Google Cloud TTS Integration
+# MAGIC %md
+# MAGIC ---
+# MAGIC ## 🎙️ Phase 2: Automated Audio Generation
+# MAGIC
+# MAGIC **Three podcast types, fully automated:**
+# MAGIC
+# MAGIC | Type | Source | Frequency | Duration |
+# MAGIC |------|--------|-----------|----------|
+# MAGIC | Daily CA Podcast | Today's stories + traps + modes | Daily 8:30 AM | 15-20 min |
+# MAGIC | Strategic Topic Deep-Dive | Mastery tracker weak topics | 2x/week | 20-30 min |
+# MAGIC | Quick Revision Brief | Key insights + flashcards | Daily | 5 min |
+# MAGIC
+# MAGIC **Two audio engines:**
+# MAGIC - **NotebookLM** (via `notebooklm-py`) — best quality, AI hosts, free
+# MAGIC - **Google Cloud TTS** (WaveNet) — reliable fallback, $406 credits
+# MAGIC
+# MAGIC ---
+
+# COMMAND ----------
+
 # DBTITLE 1,Cell 1: Configuration & Setup
 # ═══════════════════════════════════════════════════════════════════════════
 # NB8: AUDIO GENERATOR — UPSC PODCAST PIPELINE
@@ -895,3 +916,337 @@ print(f"""   Once NB9 pushes to GitHub, your content is accessible from:
       • Open in Obsidian, any media player, or phone
 """)
 print(f"✅ Integration setup complete!")
+
+# COMMAND ----------
+
+# DBTITLE 1,Cell 10: NotebookLM Automated Podcast (notebooklm-py)
+# ═══════════════════════════════════════════════════════════════════════════
+# CELL 10: NotebookLM Automated Podcast (via notebooklm-py)
+#
+# Requires Google OAuth (from GCP project dbx999)
+# Setup: console.cloud.google.com > OAuth consent > Credentials
+# 3 podcast types: Daily CA, Strategic Topics, Quick Brief
+# ═══════════════════════════════════════════════════════════════════════════
+
+import subprocess, os, json
+from datetime import date
+
+_TODAY = date.today().isoformat()
+_BASE = "/Volumes/upsc_catalog/rag/obsidian_ca"
+_PRACTICE_DIR = f"{_BASE}/Daily_Practice/{_TODAY}"
+os.makedirs(_PRACTICE_DIR, exist_ok=True)
+
+print(f"🎙️ NotebookLM Automated Podcast Generation")
+print(f"{'='*60}")
+
+# ── Step 1: Install notebooklm-py ─────────────────────────────────
+try:
+    subprocess.check_call(["pip", "install", "notebooklm-client", "-q"])
+    print("   ✅ notebooklm-client installed")
+except Exception as e:
+    print(f"   ⚠️  Install issue: {e}")
+
+# ── Step 2: Google OAuth Authentication ──────────────────────────
+# notebooklm-py needs a Google OAuth access token
+# Get this from GCP project dbx999 OAuth credentials
+
+OAUTH_CLIENT_ID = None
+OAUTH_CLIENT_SECRET = None
+ACCESS_TOKEN = None
+
+try:
+    OAUTH_CLIENT_ID = dbutils.secrets.get("upsc-bot-secrets", "google-oauth-client-id")
+    OAUTH_CLIENT_SECRET = dbutils.secrets.get("upsc-bot-secrets", "google-oauth-client-secret")
+    print(f"   ✅ Google OAuth credentials loaded from secrets")
+except Exception:
+    pass
+
+try:
+    ACCESS_TOKEN = dbutils.secrets.get("upsc-bot-secrets", "google-access-token")
+    print(f"   ✅ Google access token loaded from secrets")
+except Exception:
+    pass
+
+if not ACCESS_TOKEN and not OAUTH_CLIENT_ID:
+    print(f"""   ⚠️  Google OAuth not configured yet.
+
+   SETUP (one-time, ~3 minutes):
+   1. Go to console.cloud.google.com (project dbx999)
+   2. APIs & Services → OAuth consent screen → External → Create
+      App name: UPSC Podcast Generator
+      Emails: your email
+      Save and Continue through all steps
+   3. APIs & Services → Credentials → + Create → OAuth client ID
+      Type: Desktop app | Name: UPSC NotebookLM
+   4. Copy Client ID and Client Secret, then run:
+
+      dbutils.secrets.put("upsc-bot-secrets", "google-oauth-client-id", "YOUR_CLIENT_ID")
+      dbutils.secrets.put("upsc-bot-secrets", "google-oauth-client-secret", "YOUR_SECRET")
+
+   5. Re-run this cell → it will generate an access token.
+""")
+
+# ── Step 3: Helper functions ──────────────────────────────────────
+def safe_read_file(path):
+    try:
+        with open(path, 'r') as f:
+            return f.read()
+    except:
+        return None
+
+def generate_notebooklm_podcast(source_text, notebook_title, audio_path):
+    """Create NotebookLM notebook, add source, generate Audio Overview."""
+    try:
+        from notebooklm import NotebookLM
+
+        # Initialize with access token
+        kwargs = {}
+        if ACCESS_TOKEN:
+            kwargs['access_token'] = ACCESS_TOKEN
+
+        client = NotebookLM(**kwargs)
+
+        print(f"   ⏳ Creating notebook: {notebook_title}")
+        nb = client.create_notebook(title=notebook_title)
+
+        print(f"   ⏳ Adding source ({len(source_text):,} chars)...")
+        nb.add_source(text=source_text, title=f"UPSC CA {_TODAY}")
+
+        print(f"   ⏳ Generating Audio Overview (2-5 min)...")
+        audio = nb.generate_audio_overview()
+
+        print(f"   ⏳ Downloading audio...")
+        audio_data = audio.download()
+
+        with open(audio_path, 'wb') as f:
+            f.write(audio_data)
+
+        audio_size = os.path.getsize(audio_path)
+        print(f"   ✅ NotebookLM podcast saved!")
+        print(f"   📁 {audio_path}")
+        print(f"   📊 {audio_size/1024/1024:.1f} MB")
+        return True
+
+    except Exception as e:
+        print(f"   ⚠️  NotebookLM error: {e}")
+        return False
+
+if ACCESS_TOKEN or OAUTH_CLIENT_ID:
+    # ── TYPE 1: Daily CA Podcast ────────────────────────────────────
+    print(f"\n📰 Type 1: Daily CA Podcast")
+    ca_source = safe_read_file(f"{_PRACTICE_DIR}/combined_for_podcast.md")
+    try:
+        ca_source = ca_source or combined_doc
+    except NameError:
+        pass
+
+    if ca_source and len(ca_source) > 100:
+        ca_ok = generate_notebooklm_podcast(
+            source_text=ca_source,
+            notebook_title=f"UPSC Daily CA — {_TODAY}",
+            audio_path=f"{_PRACTICE_DIR}/notebooklm_CA_{_TODAY}.wav"
+        )
+    else:
+        print(f"   ⚠️  No CA content available")
+        ca_ok = False
+
+    # ── TYPE 2: Strategic Topic Deep-Dive ───────────────────────────
+    print(f"\n🎯 Type 2: Strategic Topic Podcast")
+    try:
+        weak_topics = spark.sql("""
+            SELECT topic_name, subject, paper, mastery_pct, priority
+            FROM upsc_catalog.rag.mastery_tracker
+            WHERE mastery_pct < 50 AND priority IN ('HIGH', 'CRITICAL')
+            ORDER BY mastery_pct ASC LIMIT 5
+        """).collect()
+
+        if weak_topics:
+            topic_names = [t.topic_name for t in weak_topics]
+            topic_list = "\n".join([
+                f"- {t.topic_name} ({t.subject}, {t.paper}) — {t.mastery_pct}% mastery"
+                for t in weak_topics
+            ])
+            topic_query = " OR ".join([f"text LIKE '%{t}%'" for t in topic_names[:3]])
+            chunks = spark.sql(f"""
+                SELECT text FROM upsc_catalog.rag.contextual_chunks
+                WHERE {topic_query} LIMIT 20
+            """).collect()
+            chunk_text = "\n\n".join([c.text[:500] for c in chunks])
+
+            strategic_source = f"""# UPSC Strategic Topic Review — {_TODAY}\n\n## Weak Topics:\n{topic_list}\n\n## Key Knowledge:\n{chunk_text[:8000]}"""
+            strat_ok = generate_notebooklm_podcast(
+                source_text=strategic_source,
+                notebook_title=f"UPSC Strategic — {_TODAY}",
+                audio_path=f"{_PRACTICE_DIR}/notebooklm_STRATEGIC_{_TODAY}.wav"
+            )
+            print(f"   Topics: {', '.join(topic_names)}")
+        else:
+            print(f"   ✅ No weak topics below 50%!")
+            strat_ok = False
+    except Exception as e:
+        print(f"   ❌ {e}")
+        strat_ok = False
+
+    # ── TYPE 3: Quick Revision Brief ────────────────────────────────
+    print(f"\n⚡ Type 3: Quick Revision Brief")
+    insights = safe_read_file(f"{_PRACTICE_DIR}/key_insights.md")
+    if insights and len(insights) > 100:
+        brief_ok = generate_notebooklm_podcast(
+            source_text=insights,
+            notebook_title=f"UPSC Brief — {_TODAY}",
+            audio_path=f"{_PRACTICE_DIR}/notebooklm_BRIEF_{_TODAY}.wav"
+        )
+    else:
+        print(f"   ⚠️  No insights available")
+        brief_ok = False
+
+    print(f"\n{'='*60}")
+    print(f"   Results: CA={'✅' if ca_ok else '⚠️'} | Strategic={'✅' if strat_ok else '⚠️'} | Brief={'✅' if brief_ok else '⚠️'}")
+else:
+    print(f"\n   ⏸️  Skipping — OAuth not configured. Follow setup above.")
+
+# COMMAND ----------
+
+# DBTITLE 1,Cell 11: Google Cloud TTS (WaveNet) + Multi-Speaker
+# ═══════════════════════════════════════════════════════════════════════════
+# CELL 11: Google Cloud TTS (WaveNet) — Multi-Speaker Podcast Audio
+# Uses $406 GCP credits on project dbx999
+# Self-contained: defines all paths locally
+# ═══════════════════════════════════════════════════════════════════════════
+
+import re, io, base64
+from datetime import date
+import requests as _req
+
+# Self-contained path definitions (no dependency on Cell 1 session)
+_TODAY = date.today().isoformat()
+_BASE = "/Volumes/upsc_catalog/rag/obsidian_ca"
+_PRACTICE_DIR = f"{_BASE}/Daily_Practice/{_TODAY}"
+_OBSIDIAN_VOL = _BASE
+
+print(f"🔊 Google Cloud TTS — WaveNet Multi-Speaker Audio")
+print(f"{'='*60}")
+
+GCP_TTS_KEY = None
+try:
+    GCP_TTS_KEY = dbutils.secrets.get("upsc-bot-secrets", "gcloud-tts-key")
+    print(f"   ✅ GCP TTS API key loaded")
+except Exception:
+    print(f"   ⚠️  GCP TTS key not set.")
+
+# Use transcript from Cell 4 if available, otherwise try reading from file
+_transcript = None
+try:
+    _transcript = transcript  # From Cell 4
+except NameError:
+    try:
+        with open(f"{_PRACTICE_DIR}/podcast_transcript.md", 'r') as f:
+            _transcript = f.read()
+        print(f"   📄 Loaded transcript from file ({len(_transcript):,} chars)")
+    except:
+        pass
+
+if GCP_TTS_KEY and _transcript:
+    VOICES = {
+        "ARJUN": {"name": "en-IN-Wavenet-B", "gender": "MALE"},
+        "PRIYA": {"name": "en-IN-Wavenet-A", "gender": "FEMALE"},
+        "NARRATOR": {"name": "en-IN-Wavenet-D", "gender": "MALE"},
+    }
+
+    def tts_synthesize(text, voice_name, gender):
+        url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={GCP_TTS_KEY}"
+        payload = {
+            "input": {"text": text[:5000]},
+            "voice": {"languageCode": "en-IN", "name": voice_name, "ssmlGender": gender},
+            "audioConfig": {
+                "audioEncoding": "MP3", "speakingRate": 1.0,
+                "effectsProfileId": ["headphone-class-device"]
+            }
+        }
+        r = _req.post(url, json=payload, timeout=30)
+        if r.status_code == 200:
+            return base64.b64decode(r.json().get("audioContent", ""))
+        else:
+            print(f"      TTS err: {r.status_code} {r.text[:80]}")
+            return None
+
+    # Parse transcript into speaker turns
+    print(f"\n   ⏳ Parsing transcript into speaker turns...")
+    turns = []
+    current_speaker = "NARRATOR"
+    current_text = ""
+
+    for line in _transcript.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        line = re.sub(r'\*\*(.+?)\*\*', r'\1', line)
+        line = re.sub(r'^#{1,3}\s+', '', line)
+        line = re.sub(r'---+', '', line)
+        line = re.sub(r'\[.*?\]', '', line)
+
+        if line.startswith("ARJUN:"):
+            if current_text.strip():
+                turns.append((current_speaker, current_text.strip()))
+            current_speaker = "ARJUN"
+            current_text = line[6:].strip()
+        elif line.startswith("PRIYA:"):
+            if current_text.strip():
+                turns.append((current_speaker, current_text.strip()))
+            current_speaker = "PRIYA"
+            current_text = line[6:].strip()
+        else:
+            current_text += " " + line
+
+    if current_text.strip():
+        turns.append((current_speaker, current_text.strip()))
+
+    print(f"   Parsed {len(turns)} speaker turns")
+
+    # Generate audio
+    print(f"   ⏳ Generating multi-speaker audio (1-2 min)...")
+    all_audio = io.BytesIO()
+    success_count = 0
+
+    for i, (speaker, text) in enumerate(turns[:50]):
+        voice = VOICES.get(speaker, VOICES["NARRATOR"])
+        audio_bytes = tts_synthesize(text, voice["name"], voice["gender"])
+        if audio_bytes:
+            all_audio.write(audio_bytes)
+            success_count += 1
+        if (i + 1) % 10 == 0:
+            print(f"      Turn {i+1}/{min(len(turns), 50)} done...")
+
+    if success_count > 0:
+        audio_data = all_audio.getvalue()
+        audio_size = len(audio_data)
+
+        # Write directly to Volume paths
+        import os
+        os.makedirs(_PRACTICE_DIR, exist_ok=True)
+        tts_path = f"{_PRACTICE_DIR}/podcast_gcloud_{_TODAY}.mp3"
+        with open(tts_path, 'wb') as f:
+            f.write(audio_data)
+
+        obsidian_audio = f"{_OBSIDIAN_VOL}/UPSC_2026/01_Current_Affairs/2026/podcast_{_TODAY}.mp3"
+        os.makedirs(os.path.dirname(obsidian_audio), exist_ok=True)
+        with open(obsidian_audio, 'wb') as f:
+            f.write(audio_data)
+
+        est_min = round(audio_size / (16000 * 60 / 8), 1)
+        print(f"\n   ✅ Multi-speaker podcast generated!")
+        print(f"   📁 {tts_path}")
+        print(f"   📊 {audio_size/1024/1024:.1f} MB | {success_count} turns | ~{est_min} min")
+        print(f"   🌐 Arjun: en-IN-Wavenet-B | Priya: en-IN-Wavenet-A")
+        print(f"   📓 Obsidian: {obsidian_audio}")
+    else:
+        print(f"   ❌ No audio generated.")
+
+    char_count = sum(len(t[1]) for t in turns[:50])
+    cost = (char_count * 16) / 1000000
+    print(f"\n{'='*60}")
+    print(f"   💰 Chars: {char_count:,} | Cost: ${cost:.4f} | Credits: ~$406")
+elif not _transcript:
+    print("   ⚠️  No transcript. Run Cell 4 first.")
+else:
+    print("   ⚠️  No TTS API key.")
