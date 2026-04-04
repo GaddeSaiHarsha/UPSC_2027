@@ -1,0 +1,212 @@
+[
+  {
+    "date":"2026-03-20",
+    "story_id":"story_1",
+    "slug":"gulf-force-majeure-invoked",
+    "title":"Gulf Energy Producers Invoke Force Majeure",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Economy|IR",
+    "keywords":"[\"force majeure\", \"energy security\"]"
+  },
+  {
+    "date":"2026-03-20",
+    "story_id":"story_2",
+    "slug":"navic-atomic-clock-failure",
+    "title":"Atomic Clock Failure in NavIC System",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"S&T|Security",
+    "keywords":"[\"NavIC\", \"atomic clock\"]"
+  },
+  {
+    "date":"2026-03-20",
+    "story_id":"story_3",
+    "slug":"pinaka-mbrl-operational",
+    "title":"Pinaka MBRL System Fully Operationalized",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Security|S&T",
+    "keywords":"[\"Pinaka\", \"MBRL\", \"DRDO\"]"
+  },
+  {
+    "date":"2026-03-20",
+    "story_id":"story_4",
+    "slug":"us-section-301-india-probe",
+    "title":"US Section 301 Probe on India Trade Practices",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Economy",
+    "keywords":"[\"Section 301\", \"US Trade Act 1974\"]"
+  },
+  {
+    "date":"2026-03-20",
+    "story_id":"story_5",
+    "slug":"sujal-gaon-id-jjm",
+    "title":"Sujal Gaon ID Scheme under Jal Jeevan Mission",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Governance|Environment",
+    "keywords":"[\"Jal Jeevan Mission\", \"Sujal Gaon\"]"
+  },
+  {
+    "date":"2026-03-20",
+    "story_id":"story_6",
+    "slug":"iran-sejjil-missile-test",
+    "title":"Iran Tests Sejjil Ballistic Missile",
+    "priority":"LOW",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Security",
+    "keywords":"[\"Sejjil\", \"ballistic missile\"]"
+  },
+  {
+    "date":"2026-03-21",
+    "story_id":"story_1",
+    "slug":"modi-kolkata-rally-tmc-attack",
+    "title":"PM Modi Attacks TMC Gundagardi at Kolkata Rally",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS2\"]",
+    "topic_cluster":"Governance",
+    "keywords":"[\"federalism\", \"elections\", \"governance\"]"
+  },
+  {
+    "date":"2026-03-21",
+    "story_id":"story_3",
+    "slug":"china-humanoid-robot-100km-trek",
+    "title":"China Humanoid Robot Sets Guinness Record with 100km Trek",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"S&T",
+    "keywords":"[\"robotics\", \"AI\", \"Guinness record\"]"
+  },
+  {
+    "date":"2026-03-21",
+    "story_id":"story_4",
+    "slug":"mumbai-flights-navi-mumbai-shift",
+    "title":"Peak-Hour Mumbai Flights Shift to Navi Mumbai Airport",
+    "priority":"LOW",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Economy",
+    "keywords":"[\"aviation\", \"infrastructure\", \"UDAN\"]"
+  },
+  {
+    "date":"2026-03-27",
+    "story_id":"story_1",
+    "slug":"malaysia-voids-us-trade-deal",
+    "title":"Malaysia Voids US Trade Deal After IEEPA Ruling; India Delays $500B Pact",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Economy|Trade Policy",
+    "keywords":"[\"Section 301\", \"IEEPA ruling\", \"trade pact\"]"
+  },
+  {
+    "date":"2026-03-30",
+    "story_id":"story_1",
+    "slug":"hormuz-crisis-india-growth-inflation",
+    "title":"Hormuz Strait Disruption Threatens India's FY27 Growth as Crude Prices Surge to $110\/Barrel",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\", \"GS2\"]",
+    "topic_cluster":"Economy|IR|Energy Security",
+    "keywords":"[\"Strait of Hormuz\", \"crude oil prices\", \"current account deficit\", \"monetary policy\", \"inflation\", \"external sector\", \"FY27 growth\"]"
+  },
+  {
+    "date":"2026-03-31",
+    "story_id":"story_2",
+    "slug":"modi-parliament-iran-war-lpg-crisis",
+    "title":"PM Modi Compares Iran War Fallout to COVID; LPG Shortages Hit Households",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\", \"GS2\"]",
+    "topic_cluster":"Economy|IR|Energy Security|Governance",
+    "keywords":"[\"LPG shortage\", \"Hormuz\", \"Modi speech\"]"
+  },
+  {
+    "date":"2026-03-31",
+    "story_id":"story_1",
+    "slug":"fy26-market-worst-selloff",
+    "title":"FY26: India's Worst Equity Selloff in Six Years Amid Oil Shocks and FPI Exodus",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Economy|IR|Energy Security",
+    "keywords":"[\"FPI outflow\", \"crude oil spike\", \"Nifty Sensex\"]"
+  },
+  {
+    "date":"2026-03-31",
+    "story_id":"story_3",
+    "slug":"stagflation-risks-amid-rupee-fall",
+    "title":"India Far from Stagflation Despite Rupee at Record \u20b994.88, 7.4% GDP Projection",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Economy|IR",
+    "keywords":"[\"stagflation\", \"rupee depreciation\", \"CPI 3.21%\"]"
+  },
+  {
+    "date":"2026-03-30",
+    "story_id":"story_1",
+    "slug":"economy-moderation-west-asia-shock",
+    "title":"Finance Ministry Flags Early Economic Slowdown Amid West Asia Crisis",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Economy|IR",
+    "keywords":"[\"economic-review\", \"crude-shock\", \"high-frequency-indicators\"]"
+  },
+  {
+    "date":"2026-04-01",
+    "story_id":"story_3",
+    "slug":"finance-act-2026-notified",
+    "title":"Government Notifies Finance Act 2026 with 4.3% Fiscal Deficit Target",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Economy|Governance",
+    "keywords":"[\"Finance Act 2026\", \"fiscal deficit\", \"buyback tax\"]"
+  },
+  {
+    "date":"2026-04-01",
+    "story_id":"story_2",
+    "slug":"rbi-rupee-intervention-fpi-outflows",
+    "title":"RBI Curbs Bank Forex Positions as Rupee Faces Crude-FPI Headwinds",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Economy|IR",
+    "keywords":"[\"rupee depreciation\", \"FPI outflows\", \"RBI intervention\"]"
+  },
+  {
+    "date":"2026-04-01",
+    "story_id":"story_1",
+    "slug":"shipping-rates-hike-exporters",
+    "title":"Indian Exporters Face 40% Shipping Rate Surge Amid Iran Conflict",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Economy|IR",
+    "keywords":"[\"shipping rates\", \"Strait of Hormuz\", \"geopolitical crisis\"]"
+  },
+  {
+    "date":"2026-03-30",
+    "story_id":"story_2",
+    "slug":"sc-gst-compensation-states",
+    "title":"Supreme Court Upholds States' GST Compensation Claims",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Governance|Economy",
+    "keywords":"[\"GST-cess\", \"fiscal-devolution\", \"Article-270\"]"
+  },
+  {
+    "date":"2026-03-30",
+    "story_id":"story_3",
+    "slug":"isro-rlv-hex02-test",
+    "title":"ISRO Succeeds in RLV-TD HEX-02 Hypersonic Re-entry Test",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"S&T|Security",
+    "keywords":"[\"reusable-launch\", \"hypersonic-reentry\", \"atmanirbhar-space\"]"
+  },
+  {
+    "date":"2026-03-30",
+    "story_id":"story_4",
+    "slug":"niti-urban-heat-islands",
+    "title":"NITI Aayog Flags Urban Heat Islands in 50+ Cities",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS1\", \"GS3\"]",
+    "topic_cluster":"Environment|Society",
+    "keywords":"[\"urban-heat\", \"heat-action-plans\", \"ndma\"]"
+  }
+]
