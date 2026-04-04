@@ -921,189 +921,264 @@ print(f"✅ Integration setup complete!")
 
 # DBTITLE 1,Cell 10: NotebookLM Automated Podcast (notebooklm-py)
 # ═══════════════════════════════════════════════════════════════════════════
-# CELL 10: NotebookLM Automated Podcast (via notebooklm-py)
+# CELL 10: NotebookLM — Consolidated Multi-Day Podcast (PRODUCTION)
 #
-# Requires Google OAuth (from GCP project dbx999)
-# Setup: console.cloud.google.com > OAuth consent > Credentials
-# 3 podcast types: Daily CA, Strategic Topics, Quick Brief
+# Merges: Section A-H structure + Working async API
+# Auth: Browser cookies from secrets | API: async with
+# Source: Consolidates last 3 days of practice materials
+# Output: Studio-quality AI podcast (25+ MB WAV)
 # ═══════════════════════════════════════════════════════════════════════════
 
-import subprocess, os, json
-from datetime import date
+import subprocess, os, json, asyncio
+from datetime import date, timedelta, datetime
+
+try:
+    subprocess.check_call(["pip", "install", "notebooklm-py", "nest_asyncio", "-q"],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    from notebooklm import NotebookLMClient
+    import nest_asyncio
+    nest_asyncio.apply()
+except Exception as e:
+    print(f"Install error: {e}")
 
 _TODAY = date.today().isoformat()
 _BASE = "/Volumes/upsc_catalog/rag/obsidian_ca"
 _PRACTICE_DIR = f"{_BASE}/Daily_Practice/{_TODAY}"
 os.makedirs(_PRACTICE_DIR, exist_ok=True)
+_ARROW = " \u2192 "  # Arrow symbol for display
+_DASH = " \u2014 "   # Em-dash for display
 
-print(f"🎙️ NotebookLM Automated Podcast Generation")
-print(f"{'='*60}")
-
-# ── Step 1: Install notebooklm-py ─────────────────────────────────
-try:
-    subprocess.check_call(["pip", "install", "notebooklm-client", "-q"])
-    print("   ✅ notebooklm-client installed")
-except Exception as e:
-    print(f"   ⚠️  Install issue: {e}")
-
-# ── Step 2: Google OAuth Authentication ──────────────────────────
-# notebooklm-py needs a Google OAuth access token
-# Get this from GCP project dbx999 OAuth credentials
-
-OAUTH_CLIENT_ID = None
-OAUTH_CLIENT_SECRET = None
-ACCESS_TOKEN = None
-
-try:
-    OAUTH_CLIENT_ID = dbutils.secrets.get("upsc-bot-secrets", "google-oauth-client-id")
-    OAUTH_CLIENT_SECRET = dbutils.secrets.get("upsc-bot-secrets", "google-oauth-client-secret")
-    print(f"   ✅ Google OAuth credentials loaded from secrets")
-except Exception:
-    pass
-
-try:
-    ACCESS_TOKEN = dbutils.secrets.get("upsc-bot-secrets", "google-access-token")
-    print(f"   ✅ Google access token loaded from secrets")
-except Exception:
-    pass
-
-if not ACCESS_TOKEN and not OAUTH_CLIENT_ID:
-    print(f"""   ⚠️  Google OAuth not configured yet.
-
-   SETUP (one-time, ~3 minutes):
-   1. Go to console.cloud.google.com (project dbx999)
-   2. APIs & Services → OAuth consent screen → External → Create
-      App name: UPSC Podcast Generator
-      Emails: your email
-      Save and Continue through all steps
-   3. APIs & Services → Credentials → + Create → OAuth client ID
-      Type: Desktop app | Name: UPSC NotebookLM
-   4. Copy Client ID and Client Secret, then run:
-
-      dbutils.secrets.put("upsc-bot-secrets", "google-oauth-client-id", "YOUR_CLIENT_ID")
-      dbutils.secrets.put("upsc-bot-secrets", "google-oauth-client-secret", "YOUR_SECRET")
-
-   5. Re-run this cell → it will generate an access token.
-""")
-
-# ── Step 3: Helper functions ──────────────────────────────────────
-def safe_read_file(path):
+def safe_read(path):
     try:
         with open(path, 'r') as f:
             return f.read()
     except:
-        return None
+        return ""
 
-def generate_notebooklm_podcast(source_text, notebook_title, audio_path):
-    """Create NotebookLM notebook, add source, generate Audio Overview."""
+# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# PHASE 1: Build Consolidated Source (Section A-H structure)
+# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+print("\U0001f399\ufe0f NotebookLM \u2014 Consolidated Multi-Day Podcast")
+print(f"{'='*60}")
+print("\n\U0001f4e6 PHASE 1: Building consolidated source...")
+
+# Gather content from last 3 days
+days = [(date.today() - timedelta(days=i)).isoformat() for i in range(3)]
+days.reverse()
+
+# Section B: Combined CA notes
+section_b = ""
+for d in days:
+    content = safe_read(f"{_BASE}/Daily_Practice/{d}/combined_for_podcast.md")
+    if content and len(content) > 100:
+        section_b += f"\n### {d}\n\n{content[:8000]}\n"
+
+# Section C: Key insights
+section_c = ""
+for d in days:
+    content = safe_read(f"{_BASE}/Daily_Practice/{d}/key_insights.md")
+    if content and len(content) > 100:
+        section_c += f"\n### Insights ({d})\n\n{content[:4000]}\n"
+
+# Section D: Deep content (QA, Mains, MCQs)
+section_d = ""
+for d in days:
+    for fname in ["01_Knowledge_QA.md", "05_Mains_Model_Answers.md", "03_Prelims_MCQs.md"]:
+        content = safe_read(f"{_BASE}/Daily_Practice/{d}/{fname}")
+        if content and len(content) > 100:
+            label = fname.replace('.md','').replace('_',' ')
+            section_d += f"\n### {label} ({d})\n\n{content[:3000]}\n"
+
+# Section E: Traps from Delta
+section_e = ""
+try:
+    traps = spark.sql(f"""
+        SELECT story_title, trap_statement, correct_understanding, trap_type
+        FROM upsc_catalog.rag.story_traps
+        WHERE date >= '{days[0]}'
+        ORDER BY date DESC LIMIT 15
+    """).collect()
+    for t in traps:
+        section_e += f"\n- WRONG: \"{t.trap_statement}\"\n  RIGHT: \"{t.correct_understanding}\" ({t.trap_type})\n"
+except:
+    section_e = "No traps data available.\n"
+
+# Section F: Weak topics
+section_f = ""
+try:
+    weak = spark.sql("""
+        SELECT topic_name, subject, paper, mastery_pct
+        FROM upsc_catalog.rag.mastery_tracker
+        WHERE mastery_pct < 60 ORDER BY mastery_pct LIMIT 10
+    """).collect()
+    for w in weak:
+        section_f += f"- {w.topic_name} ({w.subject}, {w.paper}) - {w.mastery_pct}% mastery\n"
+except:
+    section_f = "No mastery data available.\n"
+
+day_range = f"{days[0]} to {days[-1]}"
+day_list = ", ".join(days)
+
+consolidated = f"""# UPSC CSE 2027 Podcast Source - {day_range}
+## Consolidated for NotebookLM Audio Overview
+
+**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M IST')}
+**Format:** 2-host podcast (Arjun = analyst, Priya = strategist)
+**Audience:** UPSC CSE aspirants preparing for Mains
+
+---
+
+## SECTION A: FOUNDATION (Overview)
+
+This podcast covers {len(days)} days of current affairs ({day_list}).
+All stories are analyzed for UPSC relevance across GS Papers I-IV.
+
+---
+
+## SECTION B: CURRENT AFFAIRS NOTES
+
+{section_b if section_b else 'No CA notes available for these dates.'}
+
+---
+
+## SECTION C: KEY INSIGHTS & MEMORY HOOKS
+
+{section_c if section_c else 'No insights available.'}
+
+---
+
+## SECTION D: DEEP DIVE - CONCEPT CONNECTIONS
+
+{section_d if section_d else 'No deep content available.'}
+
+---
+
+## SECTION E: TRAPS YOU MUST KNOW
+
+{section_e}
+
+---
+
+## SECTION F: YOUR WEAK TOPICS (from Mastery Tracker)
+
+{section_f}
+
+---
+
+## SECTION G: PODCAST DISCUSSION GUIDE
+
+**Arjun (Analyst):** Data, facts, timelines, historical context, policy details.
+**Priya (Strategist):** Implications, trade-offs, exam angles, decision frameworks.
+**Dynamic:** Arjun explains WHAT, Priya challenges with SO WHAT, Together: NOW WHAT.
+
+---
+
+## SECTION H: QUICK MEMORY HOOKS
+
+For each major story, create a mnemonic or analogy.
+Connect stories across days to show thematic patterns.
+End with: "If you remember nothing else from these 3 days, remember these 5 things..."
+"""
+
+if len(consolidated) > 100000:
+    consolidated = consolidated[:100000]
+
+out_path = f"{_PRACTICE_DIR}/consolidated_{days[0]}_to_{days[-1]}.md"
+with open(out_path, 'w') as f:
+    f.write(consolidated)
+
+days_display = _ARROW.join(days)
+print(f"   \u2705 Source built: {len(consolidated):,} chars ({len(consolidated)//1024} KB)")
+print(f"   \U0001f4c5 Days: {days_display}")
+print(f"   \U0001f4c1 {out_path}")
+
+# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# PHASE 2: Generate NotebookLM Podcast (async)
+# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+async def run_notebooklm():
+    print(f"\n\U0001f3a7 PHASE 2: NotebookLM Podcast Generation")
+
+    home = os.path.expanduser("~")
+    SP = os.path.join(home, ".notebooklm", "storage_state.json")
     try:
-        from notebooklm import NotebookLM
+        sj = dbutils.secrets.get("upsc-bot-secrets", "notebooklm-storage-state")
+        os.makedirs(os.path.dirname(SP), exist_ok=True)
+        with open(SP, 'w') as f:
+            f.write(sj)
+        print("   \u2705 Cookies loaded")
+    except Exception:
+        print("   \u274c No cookies. Run: notebooklm login on Mac")
+        return
 
-        # Initialize with access token
-        kwargs = {}
-        if ACCESS_TOKEN:
-            kwargs['access_token'] = ACCESS_TOKEN
+    async with await NotebookLMClient.from_storage(SP) as client:
+        print("   \u2705 Client connected!")
 
-        client = NotebookLM(**kwargs)
+        title = f"UPSC Weekly CA - {day_range}"
+        print(f"   \u23f3 Creating: {title}")
+        nb = await client.notebooks.create(title=title)
+        print(f"   \U0001f4d3 ID: {nb.id}")
 
-        print(f"   ⏳ Creating notebook: {notebook_title}")
-        nb = client.create_notebook(title=notebook_title)
+        print(f"   \u23f3 Adding source ({len(consolidated):,} chars)...")
+        src = await client.sources.add_text(
+            notebook_id=nb.id, title=f"UPSC CA {day_range}",
+            content=consolidated, wait=True, wait_timeout=180.0)
+        print(f"   \u2705 Source: {src.id}")
 
-        print(f"   ⏳ Adding source ({len(source_text):,} chars)...")
-        nb.add_source(text=source_text, title=f"UPSC CA {_TODAY}")
+        print("   \u23f3 Generating Audio Overview...")
+        await client.artifacts.generate_audio(
+            notebook_id=nb.id,
+            source_ids=[src.id],
+            language="en",
+            instructions="""Create a 15-20 minute UPSC exam preparation podcast covering 3 days of current affairs.
 
-        print(f"   ⏳ Generating Audio Overview (2-5 min)...")
-        audio = nb.generate_audio_overview()
+Two hosts:
+- Arjun: Senior analyst. Explains facts, numbers, timelines, policy details.
+- Priya: Sharp strategist. Challenges with "so what?", focuses on exam relevance, gives mnemonics.
 
-        print(f"   ⏳ Downloading audio...")
-        audio_data = audio.download()
+Structure:
+1. Opening (1 min): "Good morning aspirants! 3-day current affairs wrap-up."
+2. Section B (8 min): Cover ALL major stories. What happened, Why UPSC cares, Which paper.
+3. Traps (3 min): Common mistakes from Section E. "Students often think X, but actually Y."
+4. Cross-connections (3 min): Link stories across days thematically.
+5. Weak topics (2 min): Quick review of Section F topics to focus on.
+6. Closing (2 min): "5 things to remember" + motivational sign-off.
 
-        with open(audio_path, 'wb') as f:
-            f.write(audio_data)
-
-        audio_size = os.path.getsize(audio_path)
-        print(f"   ✅ NotebookLM podcast saved!")
-        print(f"   📁 {audio_path}")
-        print(f"   📊 {audio_size/1024/1024:.1f} MB")
-        return True
-
-    except Exception as e:
-        print(f"   ⚠️  NotebookLM error: {e}")
-        return False
-
-if ACCESS_TOKEN or OAUTH_CLIENT_ID:
-    # ── TYPE 1: Daily CA Podcast ────────────────────────────────────
-    print(f"\n📰 Type 1: Daily CA Podcast")
-    ca_source = safe_read_file(f"{_PRACTICE_DIR}/combined_for_podcast.md")
-    try:
-        ca_source = ca_source or combined_doc
-    except NameError:
-        pass
-
-    if ca_source and len(ca_source) > 100:
-        ca_ok = generate_notebooklm_podcast(
-            source_text=ca_source,
-            notebook_title=f"UPSC Daily CA — {_TODAY}",
-            audio_path=f"{_PRACTICE_DIR}/notebooklm_CA_{_TODAY}.wav"
+Tone: Like two IAS officers mentoring over morning chai. Engaging, with analogies and stories."""
         )
-    else:
-        print(f"   ⚠️  No CA content available")
-        ca_ok = False
+        print("   \U0001f504 Generation started")
 
-    # ── TYPE 2: Strategic Topic Deep-Dive ───────────────────────────
-    print(f"\n🎯 Type 2: Strategic Topic Podcast")
-    try:
-        weak_topics = spark.sql("""
-            SELECT topic_name, subject, paper, mastery_pct, priority
-            FROM upsc_catalog.rag.mastery_tracker
-            WHERE mastery_pct < 50 AND priority IN ('HIGH', 'CRITICAL')
-            ORDER BY mastery_pct ASC LIMIT 5
-        """).collect()
+        audio_path = f"{_PRACTICE_DIR}/notebooklm_WEEKLY_{_TODAY}.wav"
+        print("   \u23f3 Waiting for audio (up to 15 min)...")
+        for i in range(90):
+            try:
+                await client.artifacts.download_audio(
+                    notebook_id=nb.id, output_path=audio_path)
+                sz = os.path.getsize(audio_path) / 1024 / 1024
+                elapsed = (i+1)*10
+                print(f"\n   \u2705 PODCAST DOWNLOADED! {sz:.1f} MB ({elapsed}s)")
+                print(f"   \U0001f4c1 {audio_path}")
 
-        if weak_topics:
-            topic_names = [t.topic_name for t in weak_topics]
-            topic_list = "\n".join([
-                f"- {t.topic_name} ({t.subject}, {t.paper}) — {t.mastery_pct}% mastery"
-                for t in weak_topics
-            ])
-            topic_query = " OR ".join([f"text LIKE '%{t}%'" for t in topic_names[:3]])
-            chunks = spark.sql(f"""
-                SELECT text FROM upsc_catalog.rag.contextual_chunks
-                WHERE {topic_query} LIMIT 20
-            """).collect()
-            chunk_text = "\n\n".join([c.text[:500] for c in chunks])
+                meta = {"timestamp": datetime.now().isoformat(), "notebook_id": nb.id,
+                        "source_chars": len(consolidated), "days": days,
+                        "file_mb": round(sz, 1), "generation_seconds": elapsed}
+                with open(f"{_PRACTICE_DIR}/notebooklm_metadata.json", 'w') as f:
+                    json.dump(meta, f, indent=2)
+                return True
+            except Exception:
+                if i < 89:
+                    await asyncio.sleep(10)
+                    if (i+1) % 6 == 0:
+                        print(f"      Still generating... ({(i+1)*10}s)")
+                else:
+                    print(f"\n   \u274c Timed out (15 min)")
+                    print(f"   Check notebooklm.google.com for notebook: {nb.id}")
+                    return False
 
-            strategic_source = f"""# UPSC Strategic Topic Review — {_TODAY}\n\n## Weak Topics:\n{topic_list}\n\n## Key Knowledge:\n{chunk_text[:8000]}"""
-            strat_ok = generate_notebooklm_podcast(
-                source_text=strategic_source,
-                notebook_title=f"UPSC Strategic — {_TODAY}",
-                audio_path=f"{_PRACTICE_DIR}/notebooklm_STRATEGIC_{_TODAY}.wav"
-            )
-            print(f"   Topics: {', '.join(topic_names)}")
-        else:
-            print(f"   ✅ No weak topics below 50%!")
-            strat_ok = False
-    except Exception as e:
-        print(f"   ❌ {e}")
-        strat_ok = False
+asyncio.run(run_notebooklm())
 
-    # ── TYPE 3: Quick Revision Brief ────────────────────────────────
-    print(f"\n⚡ Type 3: Quick Revision Brief")
-    insights = safe_read_file(f"{_PRACTICE_DIR}/key_insights.md")
-    if insights and len(insights) > 100:
-        brief_ok = generate_notebooklm_podcast(
-            source_text=insights,
-            notebook_title=f"UPSC Brief — {_TODAY}",
-            audio_path=f"{_PRACTICE_DIR}/notebooklm_BRIEF_{_TODAY}.wav"
-        )
-    else:
-        print(f"   ⚠️  No insights available")
-        brief_ok = False
+# COMMAND ----------
 
-    print(f"\n{'='*60}")
-    print(f"   Results: CA={'✅' if ca_ok else '⚠️'} | Strategic={'✅' if strat_ok else '⚠️'} | Brief={'✅' if brief_ok else '⚠️'}")
-else:
-    print(f"\n   ⏸️  Skipping — OAuth not configured. Follow setup above.")
+
 
 # COMMAND ----------
 
