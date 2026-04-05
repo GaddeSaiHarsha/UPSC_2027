@@ -289,11 +289,13 @@ Use Topic_Note template, check Trap_Index, create in correct subject folder
 
 ## DATABRICKS CONNECTION
 
+<private>
 - **Host**: https://adb-7405615460529826.6.azuredatabricks.net
 - **CLI Profile**: `upsc` (Databricks CLI v2 via Homebrew)
 - **Volume**: `dbfs:/Volumes/upsc_catalog/rag/obsidian_ca/UPSC_2026/`
 - **IMPORTANT**: CLI needs `dbfs:` prefix for Volume paths
 - **Sync**: `databricks --profile upsc fs cp -r dbfs:/Volumes/upsc_catalog/rag/obsidian_ca/UPSC_2026/ ~/Desktop/UPSC_2026/ --overwrite`
+</private>
 
 ## DAILY PIPELINE TIMELINE
 
@@ -380,4 +382,29 @@ Use Topic_Note template, check Trap_Index, create in correct subject folder
 > List all files in 02_Subjects/ and tell me which subject folders have no notes yet
 > Read today's CA note and give me: 3 flashcard Q&As, the most important mains angle, and any trap alerts
 > Using the Answer_Practice template, create a new file in 06_Answer_Practice/GS2/ for "Finance Commission and Fiscal Federalism"
+```
+
+## PERSISTENT MEMORY — claude-mem
+
+[claude-mem](https://github.com/thedotmack/claude-mem) is installed to give Claude persistent memory across sessions.
+Install once: `npx claude-mem install` then restart Claude Code.
+
+### How It Helps This Setup
+- Automatically captures observations from every study session (which topics, traps flagged, answers written)
+- Semantic summaries persist so Claude "remembers" progress without re-reading CLAUDE.md fully each time
+- Lets Claude cross-reference today's CA with patterns noticed in past sessions
+- `mem-search` queries let you ask: "what did I cover last week?" or "which Ethics topics did I struggle with?"
+
+### Privacy Rules for This Project
+The following information is sensitive and must be wrapped in `<private>` tags when generated in session so claude-mem does **not** store it:
+- Databricks host URLs, workspace IDs, or cluster IDs
+- Secret scope names or any credential values
+- Personal email addresses or Telegram user IDs
+
+### Useful mem-search Queries
+```
+mem-search: which GS topics did I practice answers for this month?
+mem-search: what traps did I flag in the last 5 sessions?
+mem-search: Telugu optional session errors and weak areas
+mem-search: which prelims MCQ topics had wrong answers?
 ```
