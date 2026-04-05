@@ -11,3 +11,8 @@ __pycache__/
 *.pyc
 upsc_faiss.index
 upsc_faiss_meta.pkl
+# claude-mem generated files
+.claude-mem/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

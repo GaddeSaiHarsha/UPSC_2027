@@ -29,3 +29,26 @@ Level 0: [topic] — start from scratch
 /chain [entity]  — traverse knowledge graph
 /today           — today's CA summary + traps
 /telugu          — Telugu Optional PYQ practice
+
+## Persistent Memory (claude-mem)
+
+[claude-mem](https://github.com/thedotmack/claude-mem) extends Claude Code with persistent memory across sessions — every study session's observations, tool outputs, and context are compressed and recalled automatically in future sessions.
+
+**Why it helps this setup:**
+- Claude remembers which topics you've already covered, traps you've flagged, and answers you've practiced — without re-reading the entire CLAUDE.md each time
+- Session summaries persist across daily 8:30 AM study windows
+- Use `mem-search` to ask "what did I study last week?" or "which Ethics traps did I flag?"
+- Wrap any sensitive content in `<private>...</private>` tags so it is never stored in memory
+
+**Install once (requires Node.js ≥ 18):**
+```bash
+npx claude-mem install
+```
+Then restart Claude Code. Memory capture begins automatically.
+
+**Search past sessions inside Claude Code:**
+```
+mem-search: what practice answers did I write this week?
+mem-search: which PYQ topics are still weak?
+mem-search: Telugu optional errors from last 3 sessions
+```
