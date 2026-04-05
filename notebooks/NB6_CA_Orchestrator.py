@@ -1,22 +1,28 @@
 # Databricks notebook source
 # DBTITLE 1,NB6 CA Orchestrator — Header
 # MAGIC %md
-# MAGIC # NB6: Current Affairs Orchestrator Pipeline v3.1
+# MAGIC # NB6: Current Affairs Orchestrator Pipeline v3.2
 # MAGIC ### Perplexity sonar-pro → Two-Pass Analysis → Delta → RAG Pipeline → FAISS → Obsidian
 # MAGIC
-# MAGIC **v3.1 Changes (2026-03-30): 3-Layer Deduplication Fix**
-# MAGIC - **Layer 1 — Topic-Grouped Memory Injection**: Groups recent stories by semantic similarity (40% word overlap), builds HARD BLOCK list of topics covered 2+ days. Replaces individual slug listing.
-# MAGIC - **Layer 2 — Prompt Hard-Block Language**: System prompt now has ABSOLUTE PROHIBITION on blocked topics. "DO NOT duplicate" → "will be REJECTED by downstream pipeline".
-# MAGIC - **Layer 3 — Post-Fetch Python Dedup**: After Perplexity returns, each story is scored against blocked keywords (>40% overlap) and recent titles (>50% similarity). Duplicates auto-removed.
-# MAGIC - **Fallback Call**: If <2 new stories survive dedup, makes a second sonar-pro call with `search_recency_filter=week` and explicit guidance to find niche stories.
-# MAGIC - **search_recency_filter**: Changed from `week` → `day` for primary call (reduces stale story re-fetch).
+# MAGIC **v3.2 Changes (2026-04-04): Inclusion-Based Steering + Cluster Diversity Fix**
+# MAGIC - **Root Cause**: v3.1's "ABSOLUTE PROHIBITION" approach failed because (a) word-overlap grouping was too fragile, (b) LLMs ignore exclusion lists, (c) `search_recency_filter=day` always returns trending topics.
+# MAGIC - **Fix 1 — DO-Cover-Y Prompt**: Replaced "DON'T cover X" with "DO cover Y". Prompt now leads with PRIORITY AREAS (under-covered GS topics) to steer Perplexity toward fresh domains.
+# MAGIC - **Fix 2 — Topic-Cluster Grouping**: Memory injection now groups by `topic_cluster` field + keyword-set overlap (>40%) instead of fragile 40%-word-overlap on first-6-title-words.
+# MAGIC - **Fix 3 — Cluster Diversity Enforcement**: System prompt and post-fetch dedup both enforce unique `topic_cluster` per story per day. No two stories can share the same cluster.
+# MAGIC - **Fix 4 — Keyword-Set Dedup**: Post-fetch dedup now uses story's `keywords` JSON array (not title words) for overlap scoring. Three-check pipeline: cluster diversity → keyword overlap → title-keyword cross-check.
+# MAGIC - **Fix 5 — MERGE Key Fix**: Stories MERGE changed from `(date, story_id)` to `(date, slug)` with UPSERT. Prevents duplicate story_1 entries on re-runs.
+# MAGIC
+# MAGIC **v3.1 Changes (2026-03-30): 3-Layer Deduplication Fix** *(superseded by v3.2)*
+# MAGIC - ~~Layer 1 — Topic-Grouped Memory Injection~~
+# MAGIC - ~~Layer 2 — Prompt Hard-Block Language~~
+# MAGIC - ~~Layer 3 — Post-Fetch Python Dedup~~
 # MAGIC
 # MAGIC **Pipeline Steps (end-to-end):**
-# MAGIC 1. **Memory Injection** — Reads recent stories & traps from Delta, groups by topic, builds BLOCK list
-# MAGIC 2. **Pass 1: Broad Fetch** — Perplexity `sonar-pro` fetches 5–7 UPSC-relevant CA stories (`recency=day`)
-# MAGIC 3. **Post-Fetch Dedup** — Python keyword dedup removes recycled stories (fallback to `week` if <2 survive)
+# MAGIC 1. **Memory Injection** — Reads recent stories, groups by topic_cluster+keywords, builds BLOCK list + SUGGESTED AREAS
+# MAGIC 2. **Pass 1: Broad Fetch** — Perplexity `sonar-pro` fetches 3–5 DIVERSE CA stories (`recency=day`), steered toward under-covered areas
+# MAGIC 3. **Post-Fetch Dedup** — 3-check pipeline: cluster diversity → keyword-set overlap → title-keyword cross-check (fallback to `week` if <2 survive)
 # MAGIC 4. **Dual-Output Parse** — Splits response into human brief + structured JSON (schema v1.0.0)
-# MAGIC 5. **Delta Writes** — `ca_runs`, `stories`, `story_traps` tables with MERGE idempotency
+# MAGIC 5. **Delta Writes** — `ca_runs`, `stories` (UPSERT on date+slug), `story_traps` tables with MERGE idempotency
 # MAGIC 6. **Pass 2: Deep Analysis** — Top 3 stories → sonar-pro again for PYQ patterns, prelims traps, mains skeletons, textbook links
 # MAGIC 7. **Geography Enrichment** — Auto-detects geo stories → map locations, strategic importance
 # MAGIC 8. **RAG Ingest** — Creates contextual chunks and MERGEs into `contextual_chunks`
@@ -32,31 +38,36 @@
 # COMMAND ----------
 
 # DBTITLE 1,Configuration
-# ── CONFIGURATION ─────────────────────────────────────────────────────────────────
+# -- CONFIGURATION -------------------------------------------------------------------------------
 import json, requests, time, re
 from datetime import date, timedelta, datetime, timezone
 from pyspark.sql import functions as F, Row
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType, ArrayType, FloatType
 
-# ── Perplexity API Key (try Secrets first, fall back to notebook widget) ──
+# -- Perplexity API Key (widget first, then Secrets fallback) --
+# Widget key takes priority so you can paste a fresh key without updating Secrets
+PERPLEXITY_API_KEY = ""
 try:
-    PERPLEXITY_API_KEY = dbutils.secrets.get("azure-ocr", "perplexity-api-key")
-    print("\u2705 Perplexity API key loaded from Databricks Secrets")
+    _widget_key = dbutils.widgets.get("perplexity_api_key")
+    if _widget_key and _widget_key.startswith("pplx-"):
+        PERPLEXITY_API_KEY = _widget_key
+        print("\u2705 Perplexity API key loaded from widget")
 except Exception:
-    # Secret not yet created — read from the notebook query parameter widget
+    pass
+
+if not PERPLEXITY_API_KEY:
     try:
-        PERPLEXITY_API_KEY = dbutils.widgets.get("perplexity_api_key")
+        PERPLEXITY_API_KEY = dbutils.secrets.get("azure-ocr", "perplexity-api-key")
+        print("\u2705 Perplexity API key loaded from Databricks Secrets")
     except Exception:
-        PERPLEXITY_API_KEY = ""
-    if not PERPLEXITY_API_KEY:
-        print("\u26a0\ufe0f  Perplexity API key not found!")
-        print("   Option 1: Paste your key into the 'perplexity_api_key' widget at the top of this notebook")
-        print("   Option 2: Add to Secrets (for scheduled runs):")
-        print('            databricks secrets put-secret azure-ocr perplexity-api-key --string-value "pplx-xxxx"')
-        print("\n   Get your key: https://www.perplexity.ai/settings/api")
-        print("   Cost: ~$0.003/day (sonar-pro). New accounts get $5 free credits.")
-    else:
-        print("\u26a0\ufe0f Perplexity API key loaded from widget (add to Secrets for scheduled runs)")
+        pass
+
+if not PERPLEXITY_API_KEY:
+    print("\u26a0\ufe0f  Perplexity API key not found!")
+    print("   Option 1: Paste your key into the 'perplexity_api_key' widget at the top of this notebook")
+    print("   Option 2: Add to Secrets (for scheduled runs):")
+    print('            databricks secrets put-secret azure-ocr perplexity-api-key --string-value "pplx-xxxx"')
+    print("\n   Get your key: https://www.perplexity.ai/settings/api")
 
 # Catalog / Schema (matches RAG Pipeline NB1-3)
 CATALOG         = "upsc_catalog"
@@ -190,7 +201,7 @@ except Exception as e:
 # DBTITLE 1,Prompt Engineering: System + User Prompt Builders
 # ══════════════════════════════════════════════════════════════════════════
 # PROMPT ENGINEERING — System prompt + dynamic user prompt builder
-# v3.1: Hard-block dedup + freshness requirement
+# v3.2: Inclusion-based steering + topic-cluster diversity enforcement
 # ══════════════════════════════════════════════════════════════════════════
 
 SYSTEM_PROMPT = """You are a UPSC Current Affairs Intelligence Officer with deep expertise in 
@@ -205,21 +216,20 @@ the UPSC Civil Services Examination pattern (Prelims + Mains GS Papers 1-4, Essa
 - You know the UPSC examiner's preference: static anchors dressed in current clothing -- 
   every story should connect to syllabus topics the student must know permanently.
 
-## CRITICAL: DEDUPLICATION RULE
-You will receive a BLOCKED TOPICS list. These are topics already covered in previous days.
-**ABSOLUTE PROHIBITION**: Do NOT return ANY story that covers the same underlying topic as a 
-blocked item, even if:
-- There is a minor update or follow-up
-- The headline wording is slightly different  
-- A new source reported the same event
-- You found the story in today's search results
+## DIVERSITY RULE (MOST IMPORTANT)
+Your output is part of a DAILY series. The user will tell you which topics were already 
+covered this week and which GS areas are UNDER-COVERED.
 
-Only include a blocked topic if there is a MAJOR NEW DEVELOPMENT that fundamentally changes 
-the story (e.g., a new law passed, a war started/ended, a Supreme Court verdict).
-A "minor update" or "new analysis" does NOT qualify.
-
-If you cannot find 5 genuinely new stories, return FEWER stories (minimum 3).
-Quality over quantity. 3 fresh stories > 5 recycled ones.
+**Your #1 job is TOPIC DIVERSITY across the week.**
+- PRIORITIZE the suggested under-covered areas — these are gaps in the student's weekly brief.
+- If a topic was already covered (listed as "already covered"), SKIP IT entirely unless 
+  there is a genuinely new development (new law passed, verdict delivered, war started/ended).
+  A "new article about the same event" does NOT count.
+- If you cannot find stories in the suggested areas, look for niche/emerging topics: 
+  committee reports, statistical releases, regulatory changes, judicial appointments, 
+  environmental clearances, tribal welfare updates, education policy changes.
+- NEVER return more than 1 story from the same topic_cluster in a single day.
+- If you can only find 3 genuinely diverse stories, return 3. Quality > quantity.
 
 ## TRAP GENERATION PRINCIPLES
 Traps are not trivia -- they are specific wrong beliefs that cost marks:
@@ -242,6 +252,7 @@ Severity guidance:
 - slug must be kebab-case, max 5 words.
 - Every fact must be independently verifiable -- no hallucinated statistics.
 - If unsure of a specific number/date, omit it rather than guess.
+- Each story MUST have a DIFFERENT topic_cluster value from every other story in the output.
 
 ## RELEVANCE FILTER
 Include a story only if it maps to at least one of:
@@ -300,42 +311,41 @@ _NO_STORIES_YET = "(none -- first run)"
 _NO_TRAPS_YET = "(none yet)"
 
 
-def build_user_prompt(today, recent_slugs_text, traps_text, next_trap_num):
-    """Build the dynamic user prompt with hard-block memory injection."""
+def build_user_prompt(today, recent_slugs_text, suggested_areas_text, traps_text, next_trap_num):
+    """Build the dynamic user prompt with inclusion-based topic steering (v3.2)."""
     start_trap_id = f"T{next_trap_num:03d}"
     json_example = _JSON_TEMPLATE.replace("DATE_PLACEHOLDER", today).replace("TRAP_ID_PLACEHOLDER", start_trap_id)
     stories_memory = recent_slugs_text if recent_slugs_text else _NO_STORIES_YET
     traps_memory = traps_text if traps_text else _NO_TRAPS_YET
+    suggested = suggested_areas_text if suggested_areas_text else "(Cover any UPSC-relevant area)"
     
     return f"""DATE: {today} (IST)
 
-## ⛔ BLOCKED TOPICS (ABSOLUTE PROHIBITION — DO NOT INCLUDE)
+## YOUR PRIMARY MISSION: FILL THESE GAPS
+{suggested}
+
+These GS areas have NOT been covered this week. Your primary task is to find 
+UPSC-relevant stories in these specific domains. Search for news in these areas FIRST.
+
+## Already Covered This Week (skip these topics)
 {stories_memory}
 
-Any story matching a blocked topic above will be REJECTED by the downstream pipeline.
-Your output is programmatically validated — blocked topics are auto-removed.
-Save your tokens: do NOT include them.
+Stories matching already-covered topics will be auto-removed by our validation pipeline.
+Do not waste tokens on them — they will be discarded.
 
 ## MEMORY: Active traps (T001 onward, last 60 days)
 {traps_memory}
 Next trap ID to assign: {start_trap_id}
 
 ## YOUR TASK
-Search for today's GENUINELY NEW UPSC-relevant current affairs stories.
-You MUST find stories that are NOT in the blocked list above.
+Find 3-5 DIVERSE stories for today's UPSC Current Affairs brief.
 
-Look for:
-- New legislation, bills, or ordinances
-- Supreme Court / High Court judgments  
-- New government schemes or scheme modifications
-- International summits, treaties, diplomatic developments
-- Science/Technology breakthroughs with policy implications
-- Environmental events (disasters, conservation, climate data)
-- Economic data releases (GDP, inflation, trade figures)
-- Defence acquisitions, exercises, strategic developments
-- Social issues (education policy, health data, demographic trends)
+STEP 1: Search for stories in the PRIORITY AREAS listed above
+STEP 2: If you found <3 stories from priority areas, broaden to other GS topics
+STEP 3: Verify NONE of your stories overlap with the "Already Covered" list
+STEP 4: Verify each story has a UNIQUE topic_cluster (no duplicates)
 
-For each story (3–7 stories, prefer quality over quantity):
+For each story (3-5 stories, each with a DIFFERENT topic_cluster):
 - Map to GS Papers (GS1 / GS2 / GS3 / GS4 / Essay)
 - Identify 1-3 static anchors (constitutional articles, committees, landmark judgments)
 - Assign priority: HIGH / MEDIUM / LOW based on UPSC exam relevance
@@ -356,22 +366,34 @@ Immediately after the human brief, output a single JSON block (no other text aft
 {json_example}
 """
 
-print("✅ Prompt builders loaded (v3.1 — hard-block dedup)")
-print("   Changes: ABSOLUTE PROHIBITION language, freshness guidance, topic-based blocking")
+print("\u2705 Prompt builders loaded (v3.2 — inclusion-based steering + cluster diversity)")
+print("   Changes: DO-cover-Y replaces DON'T-cover-X, unique topic_cluster enforced, suggested areas injected")
 
 # COMMAND ----------
 
 # DBTITLE 1,Step 1: Memory Injection — Load Recent Stories + Traps
 # ══════════════════════════════════════════════════════════════════════════
-# STEP 1: MEMORY INJECTION (v3.1 — Topic-Grouped Dedup)
-# Instead of sending individual slugs (which Perplexity ignores),
-# groups stories by topic cluster and builds a HARD BLOCK list.
+# STEP 1: MEMORY INJECTION (v3.2 — Topic-Cluster + Keyword-Set Dedup)
+# Groups recent stories by topic_cluster field (deterministic, not fuzzy title words).
+# Builds: (1) covered_topics block list, (2) suggested_areas for prompt steering
 # Also builds keyword sets for post-fetch Python dedup in Step 2.
 # ══════════════════════════════════════════════════════════════════════════
 
 from collections import defaultdict
 
-# 1a. Recent stories (last 7 days) — grouped by topic for stronger dedup
+# All GS topic areas the pipeline should cover across a week
+# Used to detect under-covered areas and steer Perplexity toward them
+ALL_TOPIC_AREAS = [
+    "Governance|Polity", "Economy", "Environment|Ecology", "IR",
+    "S&T", "Society", "Security|Defence", "Ethics",
+    "History|Culture", "Geography", "Education|NEP",
+    "Health|Epidemics", "Agriculture|Food Security",
+    "Judiciary|Legal", "Tribal|Welfare", "Digital|Cyber",
+    "Space|ISRO", "Energy|Climate", "Labour|Employment",
+    "Disaster Management"
+]
+
+# 1a. Recent stories (last 7 days) — grouped by topic_cluster + keywords
 cutoff = (date.today() - timedelta(days=LOOKBACK_DAYS)).isoformat()
 try:
     recent_stories_df = spark.sql(f"""
@@ -382,79 +404,115 @@ try:
     """)
     rows = recent_stories_df.collect()
     
-    # ── Group by topic cluster to find exhaustively covered topics ──
-    topic_groups = defaultdict(lambda: {"titles": [], "dates": set(), "keywords": set()})
-    for r in rows:
-        # Normalize topic key: take first 2 words of title as topic fingerprint
-        title_words = set(r.title.lower().split()[:6])
-        # Find matching group or create new
-        matched = False
-        for key, grp in topic_groups.items():
-            # Check keyword overlap with existing group titles
-            for existing_title in grp["titles"]:
-                existing_words = set(existing_title.lower().split()[:6])
-                overlap = len(title_words & existing_words) / max(len(title_words | existing_words), 1)
-                if overlap > 0.4:  # 40% word overlap = same topic
-                    grp["titles"].append(r.title)
-                    grp["dates"].add(r.date)
-                    try:
-                        kw_list = json.loads(r.keywords) if r.keywords else []
-                        grp["keywords"].update(kw for kw in kw_list if isinstance(kw, str))
-                    except: pass
-                    matched = True
-                    break
-            if matched:
-                break
-        if not matched:
-            topic_groups[r.title] = {
-                "titles": [r.title],
-                "dates": {r.date},
-                "keywords": set()
-            }
-            try:
-                kw_list = json.loads(r.keywords) if r.keywords else []
-                topic_groups[r.title]["keywords"].update(kw for kw in kw_list if isinstance(kw, str))
-            except: pass
+    # ── Group by normalized topic_cluster (primary) + keyword overlap (secondary) ──
+    topic_groups = defaultdict(lambda: {"titles": [], "dates": set(), "keywords": set(), "slugs": set()})
     
-    # ── Build BLOCKED TOPICS list (topics covered >= 2 days) ──
+    for r in rows:
+        # Primary grouping key: normalize topic_cluster (sort pipe-separated values)
+        cluster = r.topic_cluster or "Unknown"
+        cluster_key = "|".join(sorted(set(c.strip() for c in cluster.split("|"))))
+        
+        # Parse keywords for this story
+        story_keywords = set()
+        try:
+            kw_list = json.loads(r.keywords) if r.keywords else []
+            story_keywords = {kw.lower().strip() for kw in kw_list if isinstance(kw, str) and len(kw) > 2}
+        except: pass
+        
+        # Try to match to an existing group: same cluster OR >40% keyword overlap
+        matched_key = None
+        for existing_key, grp in topic_groups.items():
+            existing_cluster = existing_key.split("::")[0]
+            # Match 1: Same normalized cluster AND any keyword overlap
+            if cluster_key == existing_cluster and grp["keywords"] and story_keywords & grp["keywords"]:
+                matched_key = existing_key
+                break
+            # Match 2: Different cluster but >40% keyword overlap (cross-cluster duplication)
+            if grp["keywords"] and story_keywords:
+                overlap = len(story_keywords & grp["keywords"]) / max(len(story_keywords), 1)
+                if overlap > 0.4:
+                    matched_key = existing_key
+                    break
+        
+        if matched_key:
+            topic_groups[matched_key]["titles"].append(r.title)
+            topic_groups[matched_key]["dates"].add(r.date)
+            topic_groups[matched_key]["keywords"].update(story_keywords)
+            topic_groups[matched_key]["slugs"].add(r.slug)
+        else:
+            # New group: cluster_key::first_slug
+            group_key = f"{cluster_key}::{r.slug}"
+            topic_groups[group_key]["titles"].append(r.title)
+            topic_groups[group_key]["dates"].add(r.date)
+            topic_groups[group_key]["keywords"].update(story_keywords)
+            topic_groups[group_key]["slugs"].add(r.slug)
+    
+    # ── Build BLOCKED TOPICS (covered >= 2 days) with short canonical labels ──
     blocked_topics = []
-    blocked_keywords_all = set()  # For post-fetch dedup
+    blocked_keywords_all = set()
+    covered_cluster_keys = set()
+    
     for key, grp in topic_groups.items():
         days_count = len(grp["dates"])
+        cluster_part = key.split("::")[0]
+        covered_cluster_keys.add(cluster_part)
+        
         if days_count >= 2:  # Covered 2+ days = BLOCKED
-            first_title = grp["titles"][0]
+            # Use SHORT canonical label, not full title
+            short_label = grp["titles"][0][:80]
+            top_keywords = sorted(grp["keywords"])[:5]
             blocked_topics.append(
-                f"  ❌ BLOCKED: \"{first_title}\" — covered {days_count} days ({min(grp['dates'])} to {max(grp['dates'])})"
+                f"  - {short_label} [{cluster_part}] (covered {days_count}d, keywords: {', '.join(top_keywords)})"
             )
             blocked_keywords_all.update(grp["keywords"])
-            # Also add title words as block keywords
-            for t in grp["titles"]:
-                blocked_keywords_all.update(w.lower() for w in t.split() if len(w) > 3)
     
-    # Remove common UPSC stop words from blocked keywords
+    # Remove overly common words from blocked keywords
     stop_words = {"india", "indian", "government", "policy", "state", "under", "from", "with", 
                   "that", "this", "into", "after", "near", "over", "about", "their", "also",
-                  "upsc", "mains", "prelims", "exam"}
+                  "upsc", "mains", "prelims", "exam", "new", "amid", "says", "india's",
+                  "minister", "ministry", "national", "will", "year", "report", "data"}
     blocked_keywords_all -= stop_words
     
-    # Build memory text for prompt
-    if blocked_topics:
-        recent_slugs_text = "⛔ HARD-BLOCKED TOPICS (Perplexity MUST NOT return these):\n"
-        recent_slugs_text += "\n".join(blocked_topics)
-        recent_slugs_text += f"\n\n📊 Stats: {len(rows)} stories in last 7 days, but only {len(topic_groups)} unique topics."
-        recent_slugs_text += f"\n   {len(blocked_topics)} topics are STALE (covered 2+ days). Find genuinely NEW stories."
-    else:
-        recent_slugs_text = "(No blocked topics — all previous stories are fresh)"
+    # ── Build SUGGESTED AREAS (under-covered in last 7 days) ──
+    suggested_areas = []
+    for area in ALL_TOPIC_AREAS:
+        area_parts = set(a.strip().lower() for a in area.split("|"))
+        # Check if any covered cluster overlaps with this area
+        is_covered = False
+        for ck in covered_cluster_keys:
+            ck_parts = set(c.strip().lower() for c in ck.split("|"))
+            if area_parts & ck_parts:
+                is_covered = True
+                break
+        if not is_covered:
+            suggested_areas.append(area)
     
-    print(f"✅ Memory: {len(rows)} recent stories → {len(topic_groups)} unique topics")
-    print(f"   🚫 {len(blocked_topics)} topics BLOCKED (covered 2+ days)")
-    print(f"   🔑 {len(blocked_keywords_all)} blocked keywords for post-fetch dedup")
+    # Build memory text for prompt (ASCII-safe, no surrogate emojis)
+    if blocked_topics:
+        recent_slugs_text = "Topics already covered (skip unless MAJOR new development):\n"
+        recent_slugs_text += "\n".join(blocked_topics)
+    else:
+        recent_slugs_text = "(No stale topics -- all clear)"
+    
+    if suggested_areas:
+        suggested_areas_text = ">>> PRIORITY AREAS (under-covered this week -- search for these):\n"
+        suggested_areas_text += "\n".join(f"  [+] {area}" for area in suggested_areas[:8])
+    else:
+        suggested_areas_text = "(Good coverage across all areas this week -- find any genuinely new story)"
+    
+    print(f"\u2705 Memory: {len(rows)} recent stories -> {len(topic_groups)} unique topic groups")
+    print(f"   [X] {len(blocked_topics)} topics BLOCKED (covered 2+ days)")
+    print(f"   [K] {len(blocked_keywords_all)} blocked keywords for post-fetch dedup")
+    print(f"   [>] {len(suggested_areas)} under-covered areas to suggest")
+    for area in suggested_areas[:8]:
+        print(f"      -> {area}")
     
 except Exception as e:
-    recent_slugs_text = "(No prior stories — first run)"
+    recent_slugs_text = "(No prior stories -- first run)"
+    suggested_areas_text = "(First run -- cover any UPSC-relevant area)"
     blocked_keywords_all = set()
     topic_groups = {}
-    print(f"⚠️ Stories table empty or missing (first run): {e}")
+    print(f"\u26a0\ufe0f Stories table empty or missing (first run): {e}")
 
 # 1b. Recent traps (last 60 days) for context
 trap_cutoff = (date.today() - timedelta(days=TRAP_LOOKBACK_DAYS)).isoformat()
@@ -467,13 +525,13 @@ try:
     """)
     trap_rows = traps_df.collect()
     traps_text = "\n".join([
-        f"- {r.trap_id} | {r.subject} | {r.trap_type} | WRONG: \"{r.wrong_belief}\" → RIGHT: \"{r.correct_belief}\" | {r.severity}" 
+        f"- {r.trap_id} | {r.subject} | {r.trap_type} | WRONG: \"{r.wrong_belief}\" -> RIGHT: \"{r.correct_belief}\" | {r.severity}" 
         for r in trap_rows
     ])
-    print(f"✅ Memory: {len(trap_rows)} active traps loaded (last {TRAP_LOOKBACK_DAYS} days)")
+    print(f"\u2705 Memory: {len(trap_rows)} active traps loaded (last {TRAP_LOOKBACK_DAYS} days)")
 except Exception as e:
     traps_text = "(No traps yet)"
-    print(f"⚠️ Traps table empty or missing (first run): {e}")
+    print(f"\u26a0\ufe0f Traps table empty or missing (first run): {e}")
 
 # 1c. Get next trap ID (prevents ID collisions across runs)
 try:
@@ -482,69 +540,113 @@ try:
 except Exception:
     next_trap_num = 1  # First run ever
 
-print(f"✅ Next trap ID: T{next_trap_num:03d}")
+print(f"\u2705 Next trap ID: T{next_trap_num:03d}")
 
 # COMMAND ----------
 
 # DBTITLE 1,Step 2: Call Perplexity API (sonar-pro with web search)
-# ══════════════════════════════════════════════════════════════════════════
-# STEP 2: PERPLEXITY API CALL (v3.1 — with post-fetch dedup)
-# Uses sonar-pro with search_recency_filter="day" for fresh CA
-# After fetch: Python keyword dedup removes recycled stories
-# If <2 new stories, makes a second call with explicit exclusion
-# ══════════════════════════════════════════════════════════════════════════
+# ======================================================================
+# STEP 2: GEMINI API CALL (v3.3 -- replaces Perplexity sonar-pro)
+# Uses Gemini 2.0 Flash via Vertex AI with Google Search grounding
+# After fetch: Python dedup uses keyword arrays + topic_cluster matching
+# If <2 new stories, makes a second call with broader guidance
+# ======================================================================
 
-def call_perplexity(system_prompt, user_prompt, api_key, max_retries=3, recency="day"):
-    """Call Perplexity sonar-pro with retry logic."""
-    url = "https://api.perplexity.ai/chat/completions"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+def _get_gemini_token():
+    """Get Vertex AI access token from stored GCP service account credentials."""
+    from google.oauth2 import service_account as _sa
+    from google.auth.transport import requests as _auth_req
+    creds_json = dbutils.secrets.get("upsc-bot-secrets", "gcp-vertex-credentials")
+    creds_info = json.loads(creds_json)
+    credentials = _sa.Credentials.from_service_account_info(
+        creds_info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    credentials.refresh(_auth_req.Request())
+    return credentials.token, creds_info["project_id"]
+
+
+def call_gemini(system_prompt, user_prompt, max_retries=3, use_search=True):
+    """Call Gemini 2.0 Flash via Vertex AI REST API.
+    
+    Args:
+        system_prompt: System instructions
+        user_prompt: User message
+        max_retries: Number of retry attempts
+        use_search: Enable Google Search grounding (replaces Perplexity web search)
+    """
+    token, project_id = _get_gemini_token()
+    location = "us-central1"
+    model = "gemini-2.0-flash"
+    url = (f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}"
+           f"/locations/{location}/publishers/google/models/{model}:generateContent")
+    
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    
     payload = {
-        "model": "sonar-pro",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": user_prompt}
+        "contents": [
+            {"role": "user", "parts": [{"text": user_prompt}]}
         ],
-        "temperature": 0.2,
-        "max_tokens": 6000,
-        "search_recency_filter": recency
+        "systemInstruction": {"parts": [{"text": system_prompt}]},
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 8192
+        }
     }
+    
+    if use_search:
+        payload["tools"] = [{
+            "googleSearchRetrieval": {
+                "dynamicRetrievalConfig": {
+                    "mode": "MODE_DYNAMIC",
+                    "dynamicThreshold": 0.3
+                }
+            }
+        }]
+    
     for attempt in range(max_retries):
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=120)
+            response = requests.post(url, headers=headers, json=payload, timeout=180)
             response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
+            result = response.json()
+            content = result["candidates"][0]["content"]["parts"][0]["text"]
             return content
         except requests.exceptions.HTTPError as e:
             if response.status_code == 429:
                 wait = 30 * (attempt + 1)
-                print(f"   ⏳ Rate limited — waiting {wait}s (attempt {attempt+1}/{max_retries})")
+                print(f"   [!] Rate limited -- waiting {wait}s (attempt {attempt+1}/{max_retries})")
                 time.sleep(wait)
+            elif response.status_code == 403:
+                print(f"   [!] 403 Forbidden -- check Vertex AI API is enabled in GCP project")
+                print(f"       Response: {response.text[:300]}")
+                raise
             else:
+                print(f"   [!] HTTP {response.status_code}: {response.text[:300]}")
                 raise
         except requests.exceptions.Timeout:
             if attempt < max_retries - 1:
-                print(f"   ⏳ Timeout — retrying ({attempt+1}/{max_retries})")
+                print(f"   [!] Timeout -- retrying ({attempt+1}/{max_retries})")
                 time.sleep(10)
             else:
                 raise
-    raise RuntimeError("Perplexity failed after 3 attempts")
+        except (KeyError, IndexError) as e:
+            print(f"   [!] Unexpected response format: {e}")
+            print(f"       Response: {json.dumps(response.json(), indent=2)[:500]}")
+            raise
+    raise RuntimeError("Gemini failed after 3 attempts")
 
 
 def parse_dual_output(raw_text):
-    """Split Perplexity response into human brief + structured JSON."""
-    # Try fenced JSON block first (matches ```json, ```JSON, or bare ```)
+    """Split Gemini/Perplexity response into human brief + structured JSON."""
     json_match = re.search(r'```(?:json|JSON)?\s*([\s\S]*?)\s*```', raw_text)
 
     if not json_match:
-        # Fallback: find outermost { ... } containing "stories"
         json_match = re.search(r'(\{[\s\S]*"stories"[\s\S]*\})', raw_text)
 
     if not json_match:
-        # Save debug file for inspection
         debug_path = f"{DOCS_VOLUME}/ca_debug_{TODAY}.txt"
         with open(debug_path, "w") as f:
             f.write(raw_text)
-        raise ValueError(f"No JSON block found in Perplexity response. Raw saved to {debug_path}")
+        raise ValueError(f"No JSON block found in response. Raw saved to {debug_path}")
     
     json_str = json_match.group(1).strip()
     parsed   = json.loads(json_str)
@@ -554,60 +656,83 @@ def parse_dual_output(raw_text):
 
 def dedup_stories(stories, blocked_keywords, topic_groups):
     """
-    Post-fetch deduplication: remove stories that match blocked topics.
-    Uses keyword overlap scoring against recent story titles.
+    Post-fetch deduplication v3.2: uses topic_cluster + keyword-set overlap.
+    Three checks per story:
+      1. Same-day cluster diversity (no two stories with same cluster)
+      2. Keyword-set overlap with blocked groups (>50% of story's keywords)
+      3. Cluster match + any keyword overlap with blocked groups
     Returns (kept_stories, removed_stories).
     """
-    if not blocked_keywords:
+    if not blocked_keywords and not topic_groups:
         return stories, []
     
-    # Build title word sets from all recent stories for comparison
-    recent_title_words = []
+    blocked_groups = []
     for key, grp in topic_groups.items():
-        if len(grp["dates"]) >= 2:  # Only block topics covered 2+ days
-            for t in grp["titles"]:
-                recent_title_words.append(
-                    set(w.lower() for w in t.split() if len(w) > 3)
-                )
+        if len(grp["dates"]) >= 2:
+            cluster_part = key.split("::")[0]
+            blocked_groups.append({
+                "cluster": cluster_part,
+                "keywords": grp["keywords"],
+                "titles": grp["titles"]
+            })
     
     kept = []
     removed = []
+    seen_clusters = set()
     
     for story in stories:
         title = story.get("title", "")
-        title_words = set(w.lower() for w in title.split() if len(w) > 3)
+        raw_cluster = story.get("topic_cluster", "Unknown")
+        story_cluster = "|".join(sorted(set(c.strip() for c in raw_cluster.split("|"))))
         
-        # Check 1: Keyword overlap with blocked keywords
-        if blocked_keywords:
-            keyword_overlap = len(title_words & blocked_keywords) / max(len(title_words), 1)
-        else:
-            keyword_overlap = 0
+        story_kws = set()
+        for kw in story.get("keywords", []):
+            if isinstance(kw, str):
+                story_kws.add(kw.lower().strip())
         
-        # Check 2: Title similarity with any recent blocked story
-        max_title_similarity = 0
-        for recent_words in recent_title_words:
-            if recent_words and title_words:
-                sim = len(title_words & recent_words) / max(len(title_words | recent_words), 1)
-                max_title_similarity = max(max_title_similarity, sim)
-        
-        # Decision: reject if >40% keyword overlap OR >50% title similarity
-        is_duplicate = keyword_overlap > 0.4 or max_title_similarity > 0.5
-        
-        if is_duplicate:
+        if story_cluster in seen_clusters:
             removed.append(story)
-            print(f"   ❌ DEDUP REMOVED: \"{title}\" (kw_overlap={keyword_overlap:.0%}, title_sim={max_title_similarity:.0%})")
-        else:
-            kept.append(story)
-            print(f"   ✅ NEW: \"{title}\" (kw_overlap={keyword_overlap:.0%}, title_sim={max_title_similarity:.0%})")
+            print(f"   [X] CLUSTER DUP: \"{title}\" (cluster '{story_cluster}' already used today)")
+            continue
+        
+        is_blocked = False
+        for bg in blocked_groups:
+            if bg["keywords"] and story_kws:
+                overlap = len(story_kws & bg["keywords"]) / max(len(story_kws), 1)
+                if overlap > 0.5:
+                    is_blocked = True
+                    print(f"   [X] KW BLOCKED: \"{title}\" ({overlap:.0%} keyword overlap with blocked group)")
+                    break
+            if story_cluster == bg["cluster"] and story_kws and bg["keywords"] and (story_kws & bg["keywords"]):
+                is_blocked = True
+                shared = story_kws & bg["keywords"]
+                print(f"   [X] CLUSTER+KW BLOCKED: \"{title}\" (cluster '{story_cluster}' + shared: {list(shared)[:3]})")
+                break
+        
+        if is_blocked:
+            removed.append(story)
+            continue
+        
+        title_words = set(w.lower() for w in title.split() if len(w) > 3)
+        if blocked_keywords:
+            title_blocked_overlap = len(title_words & blocked_keywords) / max(len(title_words), 1)
+            if title_blocked_overlap > 0.5:
+                removed.append(story)
+                print(f"   [X] TITLE-KW BLOCKED: \"{title}\" ({title_blocked_overlap:.0%} title words in blocked set)")
+                continue
+        
+        kept.append(story)
+        seen_clusters.add(story_cluster)
+        print(f"   [+] NEW: \"{title}\" (cluster: {story_cluster}, kws: {len(story_kws)})")
     
     return kept, removed
 
 
-# ── PASS 1: Call Perplexity with search_recency_filter="day" ──
-user_prompt = build_user_prompt(TODAY, recent_slugs_text, traps_text, next_trap_num)
-print(f"📤 Calling Perplexity sonar-pro (search_recency_filter=day)...")
-raw_output = call_perplexity(SYSTEM_PROMPT, user_prompt, PERPLEXITY_API_KEY, recency="day")
-print(f"✅ Response received: {len(raw_output):,} chars")
+# -- PASS 1: Call Gemini with Google Search grounding --
+user_prompt = build_user_prompt(TODAY, recent_slugs_text, suggested_areas_text, traps_text, next_trap_num)
+print("[>>] Calling Gemini 2.0 Flash via Vertex AI (with Google Search grounding)...")
+raw_output = call_gemini(SYSTEM_PROMPT, user_prompt, use_search=True)
+print(f"\u2705 Response received: {len(raw_output):,} chars")
 
 # Parse dual output
 human_brief, ca_json = parse_dual_output(raw_output)
@@ -616,61 +741,68 @@ stories_raw = ca_json.get("stories", [])
 if not isinstance(stories_raw, list) or len(stories_raw) == 0:
     raise ValueError(f"LLM returned no valid stories. Keys: {list(ca_json.keys())}")
 
-print(f"\n🔍 Perplexity returned {len(stories_raw)} stories. Running post-fetch dedup...")
+print(f"\n[?] Gemini returned {len(stories_raw)} stories. Running post-fetch dedup...")
 
-# ── POST-FETCH DEDUP: Remove recycled stories ──
+# -- POST-FETCH DEDUP: Remove recycled stories --
 stories, removed_stories = dedup_stories(stories_raw, blocked_keywords_all, topic_groups)
 
-print(f"\n📊 Dedup result: {len(stories)} kept, {len(removed_stories)} removed")
+print(f"\n[=] Dedup result: {len(stories)} kept, {len(removed_stories)} removed")
 
-# ── FALLBACK: If <2 new stories, try again with "week" + stronger exclusion ──
+# -- FALLBACK: If <2 new stories, try again with broader guidance --
 if len(stories) < 2:
-    print(f"\n⚠️ Only {len(stories)} new stories. Making fallback call with search_recency_filter=week...")
-    fallback_prompt = user_prompt + "\n\n## CRITICAL REMINDER\nYour first attempt returned ONLY recycled stories. You MUST find DIFFERENT topics this time.\nLook beyond the top headlines. Search for: new committee reports, statistical releases, " \
-        "international organization reports, niche policy changes, judicial appointments, " \
-        "environmental clearances, tribal welfare updates, education policy changes."
+    print(f"\n\u26a0\ufe0f Only {len(stories)} new stories. Making fallback call...")
+    fallback_prompt = user_prompt + """\n\n## CRITICAL: YOUR FIRST ATTEMPT FAILED
+All your stories were duplicates of previously covered topics.
+You MUST find COMPLETELY DIFFERENT topics this time.
+
+Search specifically for:
+- New committee reports or statistical releases
+- International organization reports (WHO, UNEP, IMF, WTO)
+- Niche policy changes (tribal welfare, education, digital regulation)
+- Judicial appointments or High Court rulings
+- Environmental clearances or conservation developments
+- Agricultural policy updates or food security data
+- Defence exercises or strategic partnership developments
+- State-level governance innovations with national implications"""
     
-    raw_output_2 = call_perplexity(SYSTEM_PROMPT, fallback_prompt, PERPLEXITY_API_KEY, recency="week")
+    raw_output_2 = call_gemini(SYSTEM_PROMPT, fallback_prompt, use_search=True)
     _, ca_json_2 = parse_dual_output(raw_output_2)
     stories_raw_2 = ca_json_2.get("stories", [])
     
-    # Dedup the fallback results too
     stories_2, _ = dedup_stories(stories_raw_2, blocked_keywords_all, topic_groups)
     
-    # Add any genuinely new stories from fallback
     existing_slugs = {s["slug"] for s in stories}
     for s in stories_2:
         if s["slug"] not in existing_slugs:
             stories.append(s)
             existing_slugs.add(s["slug"])
     
-    # Update raw_output to include both passes for ca_runs log
     raw_output = raw_output + "\n\n=== FALLBACK CALL ===\n" + raw_output_2
-    print(f"✅ After fallback: {len(stories)} total new stories")
+    print(f"\u2705 After fallback: {len(stories)} total new stories")
 
-# Update ca_json with deduped stories
 ca_json["stories"] = stories
 
 if len(stories) == 0:
     raise ValueError("No new stories after deduplication. All stories were recycled from previous days.")
 
-print(f"\n✅ Final: {len(stories)} stories | Schema: {ca_json.get('schema_version', 'unknown')}")
+print(f"\n\u2705 Final: {len(stories)} stories | Schema: {ca_json.get('schema_version', 'unknown')}")
 for s in stories:
     traps_count = len(s.get('traps', []))
-    print(f"   • [{s['priority']}] {s['title']} ({traps_count} traps)")
+    print(f"   * [{s['priority']}] {s['title']} ({traps_count} traps, cluster: {s.get('topic_cluster', '?')})")
 
 # COMMAND ----------
 
 # DBTITLE 1,Step 3: Write to Delta — ca_runs, stories, story_traps
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 3: DELTA TABLE WRITES (MERGE for idempotency)
-# Safe to re-run — won't duplicate on same date/story_id/trap_id
+# v3.2: Stories MERGE key changed to (date, slug) + UPSERT support
+# Safe to re-run — won't duplicate on same date/slug/trap_id
 # ══════════════════════════════════════════════════════════════════════════
 
 now_utc = datetime.now(timezone.utc)
 now_utc_str = now_utc.isoformat()
 
-# 3a. Write ca_runs (raw run log) -- MERGE on run_date for idempotency on re-runs
+# 3a. Write ca_runs (raw run log) — MERGE on run_date for idempotency on re-runs
 run_row = {
     "run_date":       TODAY,
     "generated_at":   now_utc_str,
@@ -691,7 +823,9 @@ spark.sql(f"""
 """)
 print(f"\u2705 ca_runs: 1 row merged (run_date={TODAY})")
 
-# 3b. Write stories (MERGE on date + story_id)
+# 3b. Write stories — v3.2: MERGE on (date, slug) instead of (date, story_id)
+# slug is the natural key (content-derived); story_id changes across re-runs
+# Added WHEN MATCHED THEN UPDATE to handle re-runs properly
 if stories:
     stories_rows = [{
         "date":          TODAY,
@@ -708,10 +842,11 @@ if stories:
     spark.sql(f"""
         MERGE INTO {STORIES_TABLE} t 
         USING new_stories n 
-        ON t.date = n.date AND t.story_id = n.story_id 
+        ON t.date = n.date AND t.slug = n.slug
+        WHEN MATCHED THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
     """)
-    print(f"\u2705 stories: {len(stories_rows)} rows merged")
+    print(f"\u2705 stories: {len(stories_rows)} rows merged (key: date+slug)")
 
 # 3c. Write story_traps (MERGE on trap_id)
 all_traps = []
