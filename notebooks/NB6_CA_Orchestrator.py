@@ -37,6 +37,44 @@
 
 # COMMAND ----------
 
+# DBTITLE 1,NB6 CA Orchestrator — Header
+# MAGIC %md
+# MAGIC # NB6: Current Affairs Orchestrator Pipeline v3.2
+# MAGIC ### Perplexity sonar-pro → Two-Pass Analysis → Delta → RAG Pipeline → FAISS → Obsidian
+# MAGIC
+# MAGIC **v3.2 Changes (2026-04-04): Inclusion-Based Steering + Cluster Diversity Fix**
+# MAGIC - **Root Cause**: v3.1's "ABSOLUTE PROHIBITION" approach failed because (a) word-overlap grouping was too fragile, (b) LLMs ignore exclusion lists, (c) `search_recency_filter=day` always returns trending topics.
+# MAGIC - **Fix 1 — DO-Cover-Y Prompt**: Replaced "DON'T cover X" with "DO cover Y". Prompt now leads with PRIORITY AREAS (under-covered GS topics) to steer Perplexity toward fresh domains.
+# MAGIC - **Fix 2 — Topic-Cluster Grouping**: Memory injection now groups by `topic_cluster` field + keyword-set overlap (>40%) instead of fragile 40%-word-overlap on first-6-title-words.
+# MAGIC - **Fix 3 — Cluster Diversity Enforcement**: System prompt and post-fetch dedup both enforce unique `topic_cluster` per story per day. No two stories can share the same cluster.
+# MAGIC - **Fix 4 — Keyword-Set Dedup**: Post-fetch dedup now uses story's `keywords` JSON array (not title words) for overlap scoring. Three-check pipeline: cluster diversity → keyword overlap → title-keyword cross-check.
+# MAGIC - **Fix 5 — MERGE Key Fix**: Stories MERGE changed from `(date, story_id)` to `(date, slug)` with UPSERT. Prevents duplicate story_1 entries on re-runs.
+# MAGIC
+# MAGIC **v3.1 Changes (2026-03-30): 3-Layer Deduplication Fix** *(superseded by v3.2)*
+# MAGIC - ~~Layer 1 — Topic-Grouped Memory Injection~~
+# MAGIC - ~~Layer 2 — Prompt Hard-Block Language~~
+# MAGIC - ~~Layer 3 — Post-Fetch Python Dedup~~
+# MAGIC
+# MAGIC **Pipeline Steps (end-to-end):**
+# MAGIC 1. **Memory Injection** — Reads recent stories, groups by topic_cluster+keywords, builds BLOCK list + SUGGESTED AREAS
+# MAGIC 2. **Pass 1: Broad Fetch** — Perplexity `sonar-pro` fetches 3–5 DIVERSE CA stories (`recency=day`), steered toward under-covered areas
+# MAGIC 3. **Post-Fetch Dedup** — 3-check pipeline: cluster diversity → keyword-set overlap → title-keyword cross-check (fallback to `week` if <2 survive)
+# MAGIC 4. **Dual-Output Parse** — Splits response into human brief + structured JSON (schema v1.0.0)
+# MAGIC 5. **Delta Writes** — `ca_runs`, `stories` (UPSERT on date+slug), `story_traps` tables with MERGE idempotency
+# MAGIC 6. **Pass 2: Deep Analysis** — Top 3 stories → sonar-pro again for PYQ patterns, prelims traps, mains skeletons, textbook links
+# MAGIC 7. **Geography Enrichment** — Auto-detects geo stories → map locations, strategic importance
+# MAGIC 8. **RAG Ingest** — Creates contextual chunks and MERGEs into `contextual_chunks`
+# MAGIC 9. **Embedding** — Calls `databricks-qwen3-embedding-0-6b` for new CA chunks
+# MAGIC 10. ~~**VS Index Sync**~~ — *DEPRECATED 2026-03-23: replaced by FAISS rebuild in Step 10*
+# MAGIC 11. **FAISS Rebuild** — Rebuilds `IndexFlatIP` from ALL 80,808 embedded_chunks → Volume
+# MAGIC 12. **Obsidian Export** — Enhanced markdown with Deep Analysis + Geography callouts + PYQ Match
+# MAGIC
+# MAGIC **Schedule:** Daily at 7 AM IST via [UPSC Daily CA Orchestrator](#job-1121120519823159)
+# MAGIC
+# MAGIC **Cost:** \~$0.01–0.03/day (3–4 sonar-pro calls + Qwen3 embeddings)
+
+# COMMAND ----------
+
 # DBTITLE 1,Configuration
 # -- CONFIGURATION -------------------------------------------------------------------------------
 import json, requests, time, re
@@ -546,41 +584,42 @@ print(f"\u2705 Next trap ID: T{next_trap_num:03d}")
 
 # DBTITLE 1,Step 2: Call Perplexity API (sonar-pro with web search)
 # ======================================================================
-# STEP 2: GEMINI API CALL (v3.3 -- replaces Perplexity sonar-pro)
-# Uses Gemini 2.0 Flash via Vertex AI with Google Search grounding
+# STEP 2: GEMINI API CALL (v3.9 -- maxOutputTokens 65536 for thinking headroom)
+# Uses Gemini 2.5 Flash via generativelanguage.googleapis.com
+# Auth: API key from notebook widget (same pattern as Perplexity key)
+# Search: google_search tool (replaces deprecated googleSearchRetrieval)
+# Note: Gemini 2.5 Flash uses thinking tokens from the output budget.
+#   maxOutputTokens=65536 gives enough room for thinking + full JSON output.
 # After fetch: Python dedup uses keyword arrays + topic_cluster matching
-# If <2 new stories, makes a second call with broader guidance
 # ======================================================================
 
-def _get_gemini_token():
-    """Get Vertex AI access token from stored GCP service account credentials."""
-    from google.oauth2 import service_account as _sa
-    from google.auth.transport import requests as _auth_req
-    creds_json = dbutils.secrets.get("upsc-bot-secrets", "gcp-vertex-credentials")
-    creds_info = json.loads(creds_json)
-    credentials = _sa.Credentials.from_service_account_info(
-        creds_info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+def _get_gemini_api_key():
+    """Get Google AI API key: widget first, then Databricks Secrets fallback."""
+    try:
+        wk = dbutils.widgets.get("gemini_api_key")
+        if wk and len(wk) > 10:
+            return wk
+    except Exception:
+        pass
+    try:
+        return dbutils.secrets.get("upsc-bot-secrets", "google-ai-api-key")
+    except Exception:
+        pass
+    raise ValueError(
+        "Gemini API key not found!\n"
+        "   Option 1: Paste key into 'gemini_api_key' widget at top of notebook\n"
+        "   Option 2: Store in Secrets: upsc-bot-secrets/google-ai-api-key\n"
+        "   Get your key: https://aistudio.google.com/apikey"
     )
-    credentials.refresh(_auth_req.Request())
-    return credentials.token, creds_info["project_id"]
 
 
 def call_gemini(system_prompt, user_prompt, max_retries=3, use_search=True):
-    """Call Gemini 2.0 Flash via Vertex AI REST API.
+    """Call Gemini via Generative Language API with Google Search grounding."""
+    api_key = _get_gemini_api_key()
+    model = "gemini-2.5-flash"
+    fallbacks = ["gemini-2.5-flash-lite", "gemini-1.5-flash"]
     
-    Args:
-        system_prompt: System instructions
-        user_prompt: User message
-        max_retries: Number of retry attempts
-        use_search: Enable Google Search grounding (replaces Perplexity web search)
-    """
-    token, project_id = _get_gemini_token()
-    location = "us-central1"
-    model = "gemini-2.0-flash"
-    url = (f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}"
-           f"/locations/{location}/publishers/google/models/{model}:generateContent")
-    
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json"}
     
     payload = {
         "contents": [
@@ -589,42 +628,50 @@ def call_gemini(system_prompt, user_prompt, max_retries=3, use_search=True):
         "systemInstruction": {"parts": [{"text": system_prompt}]},
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 8192
+            "maxOutputTokens": 65536
         }
     }
     
     if use_search:
-        payload["tools"] = [{
-            "googleSearchRetrieval": {
-                "dynamicRetrievalConfig": {
-                    "mode": "MODE_DYNAMIC",
-                    "dynamicThreshold": 0.3
-                }
-            }
-        }]
+        payload["tools"] = [{"google_search": {}}]
     
     for attempt in range(max_retries):
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         try:
+            print(f"   Attempt {attempt+1}: {model} via Generative Language API (API key)")
             response = requests.post(url, headers=headers, json=payload, timeout=180)
             response.raise_for_status()
             result = response.json()
-            content = result["candidates"][0]["content"]["parts"][0]["text"]
+            # Gemini 2.5 may return multi-part responses: thought parts + output parts
+            # Concatenate all non-thought text parts to get the full response
+            parts = result["candidates"][0]["content"]["parts"]
+            content = "".join(p["text"] for p in parts if "text" in p and not p.get("thought", False))
+            if not content:
+                content = "".join(p["text"] for p in parts if "text" in p)
             return content
         except requests.exceptions.HTTPError as e:
             if response.status_code == 429:
                 wait = 30 * (attempt + 1)
-                print(f"   [!] Rate limited -- waiting {wait}s (attempt {attempt+1}/{max_retries})")
+                print(f"   [!] Rate limited -- waiting {wait}s")
                 time.sleep(wait)
+            elif response.status_code == 404:
+                if fallbacks:
+                    next_model = fallbacks.pop(0)
+                    print(f"   [!] 404: {model} not found. Falling back to {next_model}...")
+                    model = next_model
+                    continue
+                else:
+                    print(f"   [!] 404: {model} not found and no fallbacks left.")
+                    raise
             elif response.status_code == 403:
-                print(f"   [!] 403 Forbidden -- check Vertex AI API is enabled in GCP project")
-                print(f"       Response: {response.text[:300]}")
+                print(f"   [!] 403 Forbidden: {response.text[:400]}")
                 raise
             else:
                 print(f"   [!] HTTP {response.status_code}: {response.text[:300]}")
                 raise
         except requests.exceptions.Timeout:
             if attempt < max_retries - 1:
-                print(f"   [!] Timeout -- retrying ({attempt+1}/{max_retries})")
+                print(f"   [!] Timeout -- retrying")
                 time.sleep(10)
             else:
                 raise
@@ -632,22 +679,26 @@ def call_gemini(system_prompt, user_prompt, max_retries=3, use_search=True):
             print(f"   [!] Unexpected response format: {e}")
             print(f"       Response: {json.dumps(response.json(), indent=2)[:500]}")
             raise
-    raise RuntimeError("Gemini failed after 3 attempts")
+    raise RuntimeError(f"Gemini failed after {max_retries} attempts (last model: {model})")
 
 
 def parse_dual_output(raw_text):
-    """Split Gemini/Perplexity response into human brief + structured JSON."""
+    """Split response into human brief + structured JSON."""
     json_match = re.search(r'```(?:json|JSON)?\s*([\s\S]*?)\s*```', raw_text)
-
     if not json_match:
         json_match = re.search(r'(\{[\s\S]*"stories"[\s\S]*\})', raw_text)
-
     if not json_match:
+        # Fallback: try parsing entire response as JSON (responseMimeType case)
+        try:
+            parsed = json.loads(raw_text)
+            if "stories" in parsed:
+                return "", parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
         debug_path = f"{DOCS_VOLUME}/ca_debug_{TODAY}.txt"
         with open(debug_path, "w") as f:
             f.write(raw_text)
         raise ValueError(f"No JSON block found in response. Raw saved to {debug_path}")
-    
     json_str = json_match.group(1).strip()
     parsed   = json.loads(json_str)
     human    = raw_text[:json_match.start()].strip()
@@ -657,138 +708,85 @@ def parse_dual_output(raw_text):
 def dedup_stories(stories, blocked_keywords, topic_groups):
     """
     Post-fetch deduplication v3.2: uses topic_cluster + keyword-set overlap.
-    Three checks per story:
-      1. Same-day cluster diversity (no two stories with same cluster)
-      2. Keyword-set overlap with blocked groups (>50% of story's keywords)
-      3. Cluster match + any keyword overlap with blocked groups
     Returns (kept_stories, removed_stories).
     """
     if not blocked_keywords and not topic_groups:
         return stories, []
-    
     blocked_groups = []
     for key, grp in topic_groups.items():
         if len(grp["dates"]) >= 2:
             cluster_part = key.split("::")[0]
-            blocked_groups.append({
-                "cluster": cluster_part,
-                "keywords": grp["keywords"],
-                "titles": grp["titles"]
-            })
-    
-    kept = []
-    removed = []
-    seen_clusters = set()
-    
+            blocked_groups.append({"cluster": cluster_part, "keywords": grp["keywords"], "titles": grp["titles"]})
+    kept, removed, seen_clusters = [], [], set()
     for story in stories:
         title = story.get("title", "")
         raw_cluster = story.get("topic_cluster", "Unknown")
         story_cluster = "|".join(sorted(set(c.strip() for c in raw_cluster.split("|"))))
-        
-        story_kws = set()
-        for kw in story.get("keywords", []):
-            if isinstance(kw, str):
-                story_kws.add(kw.lower().strip())
-        
+        story_kws = {kw.lower().strip() for kw in story.get("keywords", []) if isinstance(kw, str)}
         if story_cluster in seen_clusters:
             removed.append(story)
-            print(f"   [X] CLUSTER DUP: \"{title}\" (cluster '{story_cluster}' already used today)")
+            print(f"   [X] CLUSTER DUP: \"{title}\"")
             continue
-        
         is_blocked = False
         for bg in blocked_groups:
             if bg["keywords"] and story_kws:
                 overlap = len(story_kws & bg["keywords"]) / max(len(story_kws), 1)
                 if overlap > 0.5:
-                    is_blocked = True
-                    print(f"   [X] KW BLOCKED: \"{title}\" ({overlap:.0%} keyword overlap with blocked group)")
-                    break
+                    is_blocked = True; print(f"   [X] KW BLOCKED: \"{title}\" ({overlap:.0%})"); break
             if story_cluster == bg["cluster"] and story_kws and bg["keywords"] and (story_kws & bg["keywords"]):
-                is_blocked = True
-                shared = story_kws & bg["keywords"]
-                print(f"   [X] CLUSTER+KW BLOCKED: \"{title}\" (cluster '{story_cluster}' + shared: {list(shared)[:3]})")
-                break
-        
+                is_blocked = True; print(f"   [X] CLUSTER+KW BLOCKED: \"{title}\""); break
         if is_blocked:
-            removed.append(story)
-            continue
-        
+            removed.append(story); continue
         title_words = set(w.lower() for w in title.split() if len(w) > 3)
         if blocked_keywords:
-            title_blocked_overlap = len(title_words & blocked_keywords) / max(len(title_words), 1)
-            if title_blocked_overlap > 0.5:
-                removed.append(story)
-                print(f"   [X] TITLE-KW BLOCKED: \"{title}\" ({title_blocked_overlap:.0%} title words in blocked set)")
-                continue
-        
-        kept.append(story)
-        seen_clusters.add(story_cluster)
-        print(f"   [+] NEW: \"{title}\" (cluster: {story_cluster}, kws: {len(story_kws)})")
-    
+            t_overlap = len(title_words & blocked_keywords) / max(len(title_words), 1)
+            if t_overlap > 0.5:
+                removed.append(story); print(f"   [X] TITLE-KW BLOCKED: \"{title}\""); continue
+        kept.append(story); seen_clusters.add(story_cluster)
+        print(f"   [+] NEW: \"{title}\" (cluster: {story_cluster})")
     return kept, removed
 
 
 # -- PASS 1: Call Gemini with Google Search grounding --
 user_prompt = build_user_prompt(TODAY, recent_slugs_text, suggested_areas_text, traps_text, next_trap_num)
-print("[>>] Calling Gemini 2.0 Flash via Vertex AI (with Google Search grounding)...")
+print("[>>] Calling Gemini 2.5 Flash via Generative Language API (API key auth)...")
 raw_output = call_gemini(SYSTEM_PROMPT, user_prompt, use_search=True)
 print(f"\u2705 Response received: {len(raw_output):,} chars")
 
-# Parse dual output
 human_brief, ca_json = parse_dual_output(raw_output)
 stories_raw = ca_json.get("stories", [])
-
 if not isinstance(stories_raw, list) or len(stories_raw) == 0:
     raise ValueError(f"LLM returned no valid stories. Keys: {list(ca_json.keys())}")
-
 print(f"\n[?] Gemini returned {len(stories_raw)} stories. Running post-fetch dedup...")
 
-# -- POST-FETCH DEDUP: Remove recycled stories --
 stories, removed_stories = dedup_stories(stories_raw, blocked_keywords_all, topic_groups)
-
 print(f"\n[=] Dedup result: {len(stories)} kept, {len(removed_stories)} removed")
 
-# -- FALLBACK: If <2 new stories, try again with broader guidance --
 if len(stories) < 2:
-    print(f"\n\u26a0\ufe0f Only {len(stories)} new stories. Making fallback call...")
+    print(f"\n[!] Only {len(stories)} new stories. Making fallback call...")
     fallback_prompt = user_prompt + """\n\n## CRITICAL: YOUR FIRST ATTEMPT FAILED
 All your stories were duplicates of previously covered topics.
 You MUST find COMPLETELY DIFFERENT topics this time.
-
-Search specifically for:
-- New committee reports or statistical releases
-- International organization reports (WHO, UNEP, IMF, WTO)
-- Niche policy changes (tribal welfare, education, digital regulation)
-- Judicial appointments or High Court rulings
-- Environmental clearances or conservation developments
-- Agricultural policy updates or food security data
-- Defence exercises or strategic partnership developments
-- State-level governance innovations with national implications"""
-    
+Search specifically for: committee reports, statistical releases, WHO/UNEP/IMF reports,
+judicial appointments, environmental clearances, agricultural policy, defence exercises."""
     raw_output_2 = call_gemini(SYSTEM_PROMPT, fallback_prompt, use_search=True)
     _, ca_json_2 = parse_dual_output(raw_output_2)
-    stories_raw_2 = ca_json_2.get("stories", [])
-    
-    stories_2, _ = dedup_stories(stories_raw_2, blocked_keywords_all, topic_groups)
-    
+    stories_2, _ = dedup_stories(ca_json_2.get("stories", []), blocked_keywords_all, topic_groups)
     existing_slugs = {s["slug"] for s in stories}
     for s in stories_2:
         if s["slug"] not in existing_slugs:
-            stories.append(s)
-            existing_slugs.add(s["slug"])
-    
+            stories.append(s); existing_slugs.add(s["slug"])
     raw_output = raw_output + "\n\n=== FALLBACK CALL ===\n" + raw_output_2
     print(f"\u2705 After fallback: {len(stories)} total new stories")
 
 ca_json["stories"] = stories
-
 if len(stories) == 0:
-    raise ValueError("No new stories after deduplication. All stories were recycled from previous days.")
+    raise ValueError("No new stories after deduplication.")
 
 print(f"\n\u2705 Final: {len(stories)} stories | Schema: {ca_json.get('schema_version', 'unknown')}")
 for s in stories:
-    traps_count = len(s.get('traps', []))
-    print(f"   * [{s['priority']}] {s['title']} ({traps_count} traps, cluster: {s.get('topic_cluster', '?')})")
+    tc = len(s.get('traps', []))
+    print(f"   * [{s['priority']}] {s['title']} ({tc} traps, cluster: {s.get('topic_cluster', '?')})")
 
 # COMMAND ----------
 
@@ -885,9 +883,9 @@ if now_utc.hour < 8:
 
 # DBTITLE 1,Step 3B: Pass 2 — Deep Analysis (Top 3 Stories)
 # ══════════════════════════════════════════════════════════════════════════
-# STEP 3B: TWO-PASS CA SYNTHESIS (v3.0)
+# STEP 3B: TWO-PASS CA SYNTHESIS (v3.1 — Gemini 2.5 Flash)
 # Pass 1 already fetched 5-7 stories. Now Pass 2 takes the top 3
-# and calls sonar-pro again for deep UPSC-specific analysis:
+# and calls Gemini again (no search grounding) for deep UPSC analysis:
 #   - PYQ patterns (2013-2024)
 #   - Detailed prelims traps
 #   - Complete 10-marker mains skeleton
@@ -971,7 +969,7 @@ deep_results = []
 for i, story in enumerate(top_3):
     print(f"   [{i+1}/{len(top_3)}] {story['title']}...")
     try:
-        raw = call_perplexity(DEEP_ANALYSIS_SYSTEM, build_deep_prompt(story), PERPLEXITY_API_KEY)
+        raw = call_gemini(DEEP_ANALYSIS_SYSTEM, build_deep_prompt(story), use_search=False)
         # Extract JSON from response (may have markdown fencing)
         json_match = re.search(r'```json\s*([\s\S]*?)\s*```', raw)
         if json_match:
@@ -1043,9 +1041,9 @@ else:
 
 # DBTITLE 1,Step 3C: Geography Enrichment (Auto-Detect)
 # ══════════════════════════════════════════════════════════════════════════
-# STEP 3C: GEOGRAPHY FLAG + ENRICHMENT (v3.0)
+# STEP 3C: GEOGRAPHY FLAG + ENRICHMENT (v3.1 — Gemini 2.5 Flash)
 # Auto-detects geography stories by subject or keyword scan
-# Calls sonar-pro for map location, surrounding context, strategic importance
+# Calls Gemini (no search grounding) for map location, context, strategic importance
 # ══════════════════════════════════════════════════════════════════════════
 
 GEO_TABLE = f"{CATALOG}.{SCHEMA}.geography_context"
@@ -1112,7 +1110,7 @@ geo_results = []
 for i, story in enumerate(geo_stories):
     print(f"   [{i+1}/{len(geo_stories)}] {story['title']}...")
     try:
-        raw = call_perplexity(GEO_SYSTEM, build_geo_prompt(story), PERPLEXITY_API_KEY)
+        raw = call_gemini(GEO_SYSTEM, build_geo_prompt(story), use_search=False)
         json_match = re.search(r'```json\s*([\s\S]*?)\s*```', raw)
         if json_match:
             parsed = json.loads(json_match.group(1).strip())
@@ -1224,11 +1222,15 @@ else:
 
 # DBTITLE 1,Step 5: Embed CA Chunks (NEW — Missing from v1!)
 # ══════════════════════════════════════════════════════════════════════════
-# STEP 5: EMBEDDING (v2 addition -- NB6 v1 wrote chunks without embeddings!)
-# Calls databricks-qwen3-embedding-0-6b (1024-dim) for new CA chunks
+# STEP 5: EMBEDDING (v2.1 — switched to databricks-bge-large-en)
+# Original model databricks-qwen3-embedding-0-6b was retired (404).
+# databricks-bge-large-en also produces 1024-dim embeddings.
 # Uses Volume parquet workaround for serverless Spark Connect RPC limits
 # ══════════════════════════════════════════════════════════════════════════
 import pandas as pd
+
+# Override model name — original endpoint was removed
+EMBEDDING_MODEL = "databricks-bge-large-en"
 
 host = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiUrl().getOrElse(None)
 token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().getOrElse(None)
@@ -2314,261 +2316,124 @@ print("\n  Next: Download this folder to your Mac and open in Obsidian")
 
 # DBTITLE 1,Recovery: Backfill Missing Dates (Mar 22-23)
 # ══════════════════════════════════════════════════════════════════════════
-# RECOVERY: Backfill failed dates (2026-03-22, 2026-03-23)
-# These jobs crashed at Step 3B (MERGE SET * vs dimension_labels column)
-# Stories are already in Delta — this cell re-runs Steps 3B→7 from saved data
-# v3.1 FIX: isinstance guards on all parsed JSON items
-# DELETE THIS CELL after recovery is confirmed
+# RECOVERY: Backfill stories + traps from saved ca_runs data
+# ca_runs has parsed_json for Mar 22-29 but stories table is missing them.
+# This cell re-extracts stories/traps from saved data — NO API calls needed.
+# For Apr 2-4 (no ca_runs data), calls Gemini to generate fresh stories.
 # ══════════════════════════════════════════════════════════════════════════
-import json, re, time, os, requests
-import numpy as np
-import pandas as pd
-from datetime import date as _date, datetime, timezone
-from pyspark.sql import functions as F, Row
+import json
 
-# Config (same as cell 2)
-CATALOG = "upsc_catalog"
-SCHEMA = "rag"
-DEEP_ANALYSIS_TABLE = f"{CATALOG}.{SCHEMA}.deep_analysis"
-GEO_TABLE = f"{CATALOG}.{SCHEMA}.geography_context"
-CHUNKS_TABLE = f"{CATALOG}.{SCHEMA}.contextual_chunks"
-EMBED_TABLE = f"{CATALOG}.{SCHEMA}.embedded_chunks"
-OBSIDIAN_VOLUME = f"/Volumes/{CATALOG}/{SCHEMA}/obsidian_ca"
-DOCS_VOLUME = f"/Volumes/{CATALOG}/{SCHEMA}/documents"
-EMBEDDING_MODEL = "databricks-qwen3-embedding-0-6b"
-EMBEDDING_DIM = 1024
+# ── 1. Find dates with ca_runs data but missing/incomplete stories ──
+existing_stories = spark.sql(f"""
+    SELECT date, COUNT(*) as cnt FROM {CATALOG}.{SCHEMA}.stories GROUP BY date
+""").collect()
+existing_map = {r["date"]: r["cnt"] for r in existing_stories}
 
-PERPLEXITY_API_KEY = dbutils.secrets.get("azure-ocr", "perplexity-api-key")
-host = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiUrl().getOrElse(None)
-token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().getOrElse(None)
+ca_runs_dates = spark.sql(f"""
+    SELECT run_date, story_count, parsed_json FROM {CATALOG}.{SCHEMA}.ca_runs ORDER BY run_date
+""").collect()
 
-# Perplexity call helper
-def call_perplexity(system_prompt, user_prompt, api_key, max_retries=3):
-    url = "https://api.perplexity.ai/chat/completions"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    payload = {"model": "sonar-pro", "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}], "temperature": 0.2, "max_tokens": 6000, "search_recency_filter": "week"}
-    for attempt in range(max_retries):
-        try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=120)
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"]
-        except requests.exceptions.HTTPError:
-            if resp.status_code == 429:
-                time.sleep(30 * (attempt + 1))
-            else: raise
-        except requests.exceptions.Timeout:
-            if attempt < max_retries - 1: time.sleep(10)
-            else: raise
-    raise RuntimeError("Perplexity failed")
+print("\u2550" * 60)
+print("  BACKFILL ASSESSMENT")
+print("\u2550" * 60)
+recoverable = []
+for r in ca_runs_dates:
+    d = r["run_date"]
+    ca_count = r["story_count"]
+    stories_count = existing_map.get(d, 0)
+    if stories_count < ca_count:
+        gap = ca_count - stories_count
+        print(f"  {d}: ca_runs={ca_count}, stories={stories_count} -> RECOVER {gap} stories")
+        recoverable.append((d, r["parsed_json"]))
+    elif stories_count == 0:
+        print(f"  {d}: ca_runs={ca_count}, stories=0 -> RECOVER ALL")
+        recoverable.append((d, r["parsed_json"]))
+    else:
+        print(f"  {d}: ca_runs={ca_count}, stories={stories_count} -> OK")
 
-# Embedding helper
-def embed_batch(texts, batch_size=20):
-    url_emb = f"{host}/serving-endpoints/{EMBEDDING_MODEL}/invocations"
-    hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    all_emb = []
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i:i+batch_size]
-        resp = requests.post(url_emb, headers=hdrs, json={"input": batch}, timeout=120)
-        resp.raise_for_status()
-        all_emb.extend([item["embedding"] for item in resp.json()["data"]])
-    return all_emb
+print(f"\n  Total dates to recover: {len(recoverable)}")
 
-def _safe_json_load(raw, fallback):
-    """Safely parse JSON string, returning fallback on failure."""
-    if not raw:
-        return fallback
+# ── 2. Re-extract stories + traps from saved parsed_json ──
+all_stories_rows = []
+all_traps_rows = []
+
+for recover_date, parsed_json_str in recoverable:
     try:
-        parsed = json.loads(raw)
-        return parsed if parsed is not None else fallback
-    except (json.JSONDecodeError, TypeError):
-        return fallback
+        ca_json = json.loads(parsed_json_str)
+        stories_list = ca_json.get("stories", [])
+        if not stories_list:
+            print(f"  \u26a0\ufe0f {recover_date}: parsed_json has no stories")
+            continue
+        
+        for s in stories_list:
+            all_stories_rows.append({
+                "date":          recover_date,
+                "story_id":      s.get("id", ""),
+                "slug":          s.get("slug", ""),
+                "title":         s.get("title", ""),
+                "priority":      s.get("priority", "MEDIUM"),
+                "gs_papers":     json.dumps(s.get("gs_papers", [])),
+                "topic_cluster": s.get("topic_cluster", ""),
+                "keywords":      json.dumps(s.get("keywords", []))
+            })
+            for t in s.get("traps", []):
+                all_traps_rows.append({
+                    "trap_id":            t.get("trap_id", ""),
+                    "story_slug":         s.get("slug", ""),
+                    "subject":            s.get("topic_cluster", ""),
+                    "trap_type":          t.get("trap_type", ""),
+                    "wrong_belief":       t.get("wrong_belief", ""),
+                    "correct_belief":     t.get("correct_belief", t.get("correct_fact", "")),
+                    "severity":           t.get("severity", ""),
+                    "reinforces_trap_id": t.get("reinforces_trap_id") or "",
+                    "created_date":       recover_date
+                })
+        print(f"  \u2705 {recover_date}: extracted {len(stories_list)} stories, {sum(len(s.get('traps',[])) for s in stories_list)} traps")
+    except Exception as e:
+        print(f"  \u274c {recover_date}: parse error: {e}")
 
-# ── Indicator symbols ──
-_DEEP_CHECK = "\u2705"
-_GEO_GLOBE = "\U0001f30d"
-_DASH = "\u2014"
-_CROSS = "\u274c"
-_CHECK = "\u2705"
-_BULB = "\U0001f4a1"
-_ENDASH = "\u2013"
+# ── 3. Write recovered stories to Delta ──
+if all_stories_rows:
+    spark.createDataFrame(all_stories_rows).createOrReplaceTempView("backfill_stories")
+    result = spark.sql(f"""
+        MERGE INTO {CATALOG}.{SCHEMA}.stories t
+        USING backfill_stories n
+        ON t.date = n.date AND t.slug = n.slug
+        WHEN MATCHED THEN UPDATE SET *
+        WHEN NOT MATCHED THEN INSERT *
+    """)
+    print(f"\n\u2705 Stories: {len(all_stories_rows)} rows merged into stories table")
+else:
+    print("\n\u26a0\ufe0f No stories to recover")
 
-# ══════════════════════════════════════════════════════════════════════════
-MISSED_DATES = ["2026-03-22", "2026-03-23"]
+# ── 4. Write recovered traps to Delta ──
+if all_traps_rows:
+    spark.createDataFrame(all_traps_rows).createOrReplaceTempView("backfill_traps")
+    result = spark.sql(f"""
+        MERGE INTO {CATALOG}.{SCHEMA}.story_traps t
+        USING backfill_traps n
+        ON t.trap_id = n.trap_id
+        WHEN NOT MATCHED THEN INSERT *
+    """)
+    print(f"\u2705 Traps: {len(all_traps_rows)} rows merged into story_traps table")
+else:
+    print("\u26a0\ufe0f No traps to recover")
 
-for RECOVER_DATE in MISSED_DATES:
-    print(f"\n{'\u2550'*60}")
-    print(f"  RECOVERING: {RECOVER_DATE}")
-    print(f"{'\u2550'*60}")
-    
-    # ── Load existing data from ca_runs ──
-    row = spark.sql(f"SELECT raw_output, parsed_json FROM {CATALOG}.{SCHEMA}.ca_runs WHERE run_date = '{RECOVER_DATE}'").collect()
-    if not row:
-        print(f"  \u274c No ca_run found for {RECOVER_DATE} — skipping")
-        continue
-    
-    raw_output = row[0]["raw_output"]
-    parsed_json_str = row[0]["parsed_json"]
-    ca_json = json.loads(parsed_json_str)
-    stories = ca_json.get("stories", [])
-    print(f"  Loaded {len(stories)} stories from ca_runs")
-    
-    # Extract human brief from raw_output
-    json_match = re.search(r'```json\s*[\s\S]*?\s*```', raw_output)
-    human_brief = raw_output[:json_match.start()].strip() if json_match else raw_output[:2000]
-    
-    now_utc = datetime.now(timezone.utc).isoformat()
-    now_utc_str = now_utc
-    
-    # ── Step 3B: Deep Analysis (with fix) ──
-    print(f"\n  Step 3B: Deep Analysis...")
-    DEEP_SYSTEM = """You are a UPSC exam pattern analyst. Given a current affairs story, provide deep exam-focused analysis. Output ONLY valid JSON, no other text."""
-    priority_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
-    top_3 = sorted(stories, key=lambda s: priority_order.get(s.get("priority", "LOW"), 2))[:3]
-    
-    deep_results = []
-    for i, story in enumerate(top_3):
-        print(f"    [{i+1}/{len(top_3)}] {story['title'][:60]}...")
-        try:
-            prompt = f"""Analyze this UPSC CA story: {story['title']}\nGS: {', '.join(story.get('gs_papers',[]))}\nCluster: {story.get('topic_cluster','')}\nRelevance: {story.get('relevance','')}\n\nProvide JSON with: pyq_patterns, traps_detailed, mains_skeleton, static_links."""
-            raw = call_perplexity(DEEP_SYSTEM, prompt, PERPLEXITY_API_KEY)
-            jm = re.search(r'```json\s*([\s\S]*?)\s*```', raw)
-            parsed = json.loads(jm.group(1).strip()) if jm else json.loads(raw.strip())
-            deep_results.append({"story_id": story["id"], "date": RECOVER_DATE, "pyq_patterns": json.dumps(parsed.get("pyq_patterns",[])), "traps_detailed": json.dumps(parsed.get("traps_detailed",[])), "mains_skeleton": json.dumps(parsed.get("mains_skeleton",{})), "static_links": json.dumps(parsed.get("static_links",[])), "created_date": RECOVER_DATE})
-            print(f"      \u2705 Done")
-        except Exception as e:
-            print(f"      \u26a0\ufe0f Failed: {e}")
-        time.sleep(2)
-    
-    DEEP_COLS = ["story_id", "date", "pyq_patterns", "traps_detailed", "mains_skeleton", "static_links", "created_date"]
-    if deep_results:
-        spark.createDataFrame(deep_results).select(*DEEP_COLS).createOrReplaceTempView("recovery_deep")
-        spark.sql(f"""MERGE INTO {DEEP_ANALYSIS_TABLE} t USING recovery_deep n ON t.story_id = n.story_id AND t.date = n.date
-            WHEN MATCHED THEN UPDATE SET t.pyq_patterns=n.pyq_patterns, t.traps_detailed=n.traps_detailed, t.mains_skeleton=n.mains_skeleton, t.static_links=n.static_links, t.created_date=n.created_date
-            WHEN NOT MATCHED THEN INSERT (story_id, date, pyq_patterns, traps_detailed, mains_skeleton, static_links, created_date) VALUES (n.story_id, n.date, n.pyq_patterns, n.traps_detailed, n.mains_skeleton, n.static_links, n.created_date)""")
-        print(f"  \u2705 Deep analysis: {len(deep_results)} rows merged")
-    
-    # ── Step 3C: Geography (skip Perplexity call, use empty if none) ──
-    GEO_KEYWORDS = {"strait","river","pass","plateau","delta","basin","peninsula","chokepoint","sea","ocean","mountain","island","gulf","canal","border","glacier","lake"}
-    geo_stories = [s for s in stories if any(kw in " ".join([s.get("title",""), s.get("relevance",""), " ".join(s.get("keywords",[]))]).lower() for kw in GEO_KEYWORDS)]
-    geo_results = []  # Skip Perplexity for geography to save API calls
-    print(f"  Step 3C: {len(geo_stories)} geo stories detected (skipping Perplexity call)")
-    
-    # ── Step 4: RAG Ingest (contextual_chunks) ──
-    print(f"  Step 4: Creating contextual chunks...")
-    ca_chunks = []
-    for idx, story in enumerate(stories):
-        facts_text = " | ".join([f["statement"] if isinstance(f, dict) else str(f) for f in story.get("facts", [])])
-        body_points = "\n".join(story.get("answer_skeleton", {}).get("body_points", []))
-        anchors = ", ".join(story.get("static_anchors", []))
-        gs_papers = ", ".join(story.get("gs_papers", []))
-        chunk_text = f"""{story['title']} | {RECOVER_DATE}\n{story.get('relevance','')}\nMEMORY HOOK: {story.get('memory_hook','')}\nKey facts: {facts_text}\nAnswer skeleton: {story.get('answer_skeleton',{}).get('intro','')}\n{body_points}\nStatic anchors: {anchors}""".strip()
-        ctx_header = f"Current Affairs {RECOVER_DATE}: {story['title']} \u2014 {gs_papers}"
-        enriched = f"[Context: {ctx_header}]\n\n{chunk_text}"
-        try: chunk_index = int(story['id'].split('_')[1])
-        except: chunk_index = idx
-        ca_chunks.append({"chunk_id": f"ca_{RECOVER_DATE}_{story['slug']}", "source_file": f"CA_{RECOVER_DATE}.md", "subject": "Current Affairs", "page_number": 1, "chunk_index": chunk_index, "text": enriched, "raw_text": chunk_text, "context_header": ctx_header, "token_count": len(enriched.split()), "ingested_at": now_utc, "doc_type": "CurrentAffairs", "exam_stage": "Both"})
-    
-    if ca_chunks:
-        ca_df = spark.createDataFrame([Row(**c) for c in ca_chunks])
-        ca_df.createOrReplaceTempView("recovery_chunks")
-        spark.sql(f"MERGE INTO {CHUNKS_TABLE} t USING recovery_chunks s ON t.chunk_id = s.chunk_id WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *")
-        print(f"  \u2705 {len(ca_chunks)} chunks merged into contextual_chunks")
-    
-    # ── Step 5: Embedding ──
-    print(f"  Step 5: Embedding {len(ca_chunks)} chunks...")
-    ca_texts = [c["text"] for c in ca_chunks]
-    ca_ids = [c["chunk_id"] for c in ca_chunks]
-    embeddings = embed_batch(ca_texts)
-    chunks_by_id = {c["chunk_id"]: c for c in ca_chunks}
-    embed_records = [{"chunk_id": cid, "text": txt, "subject": chunks_by_id[cid].get("subject","CurrentAffairs"), "source_file": chunks_by_id[cid].get("source_file",""), "page_number": int(chunks_by_id[cid].get("page_number",0)), "token_count": int(chunks_by_id[cid].get("token_count",0)), "embedding": emb} for cid, txt, emb in zip(ca_ids, ca_texts, embeddings)]
-    pq_path = f"{DOCS_VOLUME}/recovery_embed_{RECOVER_DATE}.parquet"
-    pd.DataFrame(embed_records).to_parquet(pq_path, index=False)
-    edf = spark.read.parquet(pq_path).withColumn("page_number", F.col("page_number").cast("int")).withColumn("token_count", F.col("token_count").cast("int"))
-    edf.createOrReplaceTempView("recovery_embeddings")
-    spark.sql(f"MERGE INTO {EMBED_TABLE} t USING recovery_embeddings s ON t.chunk_id = s.chunk_id WHEN MATCHED THEN UPDATE SET t.text=s.text, t.embedding=s.embedding, t.subject=s.subject, t.source_file=s.source_file, t.page_number=s.page_number, t.token_count=s.token_count WHEN NOT MATCHED THEN INSERT *")
-    try: os.remove(pq_path)
-    except: pass
-    print(f"  \u2705 {len(embeddings)} embeddings merged")
-    
-    # ── Step 7: Obsidian Note (v3.1 FIX: isinstance guards) ──
-    print(f"  Step 7: Generating Obsidian note...")
-    deep_by_story = {d["story_id"]: d for d in deep_results} if deep_results else {}
-    geo_by_story = {}
-    
-    # Minimal Obsidian note builder
-    gs_papers_all = sorted(set(p for s in stories for p in s.get("gs_papers", [])))
-    topic_clusters = sorted(set(s.get("topic_cluster", "") for s in stories))
-    tags = ["current-affairs", RECOVER_DATE[:7]] + [tc.lower().replace(" ", "-") for tc in topic_clusters if tc]
-    frontmatter = f"""---\ndate: {RECOVER_DATE}\ngenerated_at: {now_utc}\nstory_count: {len(stories)}\ndeep_analysis_count: {len(deep_by_story)}\ngeography_stories: 0\ngs_papers: [{', '.join(gs_papers_all)}]\ntopics: [{', '.join(topic_clusters)}]\ntags: [{', '.join(tags)}]\ntype: daily-brief\nversion: "3.1"\n---"""
-    
-    story_rows = []
-    for s in stories:
-        gs_str = ", ".join(s.get("gs_papers", []))
-        deep_ind = _DEEP_CHECK if s["id"] in deep_by_story else ""
-        story_rows.append(f"| {s['id']} | {s['priority']} | [[#{s['slug']}|{s['title']}]] | {gs_str} | {deep_ind} | |")
-    story_table = f"| ID | Priority | Story | GS Papers | Deep | Geo |\n|---|---|---|---|---|---|\n" + "\n".join(story_rows)
-    
-    story_sections = []
-    for s in stories:
-        facts_md = "\n".join([f"- {f['statement']}" if isinstance(f, dict) else f"- {f}" for f in s.get("facts", [])])
-        anchors = ", ".join([f"`{a}`" for a in s.get("static_anchors", [])])
-        body_md = "\n".join([f"- {p}" for p in s.get("answer_skeleton", {}).get("body_points", [])])
-        trap_blocks = []
-        for t in s.get("traps", []):
-            if isinstance(t, dict):
-                correct = t.get("correct_belief", t.get("correct_fact", ""))
-                trap_blocks.append(f"> [!warning] {t.get('trap_id','?')} {_DASH} {t.get('trap_type','?')} ({t.get('severity','?')})\n> {_CROSS} **Wrong:** {t.get('wrong_belief','')}\n> {_CHECK} **Right:** {correct}")
-            else:
-                trap_blocks.append(f"> [!warning] {t}")
-        traps_md = "\n".join(trap_blocks)
-        deep_section = ""
-        if s["id"] in deep_by_story:
-            d = deep_by_story[s["id"]]
-            pyq_data = _safe_json_load(d.get("pyq_patterns", "[]"), [])
-            # FIX: Handle both dict and string items
-            pyq_lines = []
-            if isinstance(pyq_data, list):
-                for p in pyq_data:
-                    if isinstance(p, dict):
-                        pyq_lines.append(f"- **{p.get('year','?')} {p.get('paper','')}: {p.get('question_theme','')}** -> {p.get('how_it_connects','')}")
-                    elif isinstance(p, str):
-                        pyq_lines.append(f"- {p}")
-            elif isinstance(pyq_data, str):
-                pyq_lines.append(f"- {pyq_data}")
-            pyq_md = "\n".join(pyq_lines) if pyq_lines else "- No direct PYQ matches"
-            mains_data = _safe_json_load(d.get("mains_skeleton", "{}"), {})
-            # FIX: Handle mains_data as string or dict
-            if isinstance(mains_data, dict):
-                mains_body = "\n".join([f"- {p}" for p in mains_data.get("body", [])])
-                mains_q = mains_data.get('question', '')
-            elif isinstance(mains_data, str):
-                mains_body = ""
-                mains_q = mains_data
-            else:
-                mains_body = ""
-                mains_q = ""
-            deep_section = f"\n### Deep Analysis (Pass 2)\n\n#### PYQ Patterns\n{pyq_md}\n\n#### Mains Skeleton\n> **Q:** {mains_q}\n\n{mains_body}\n"
-        memo = s.get("memory_hook", "")
-        gs_str = ", ".join(s.get("gs_papers", []))
-        cluster = s.get("topic_cluster", "")
-        intro = s.get("answer_skeleton", {}).get("intro", "")
-        concl = s.get("answer_skeleton", {}).get("conclusion_direction", "")
-        story_sections.append(f"\n## {s['title']} {{#{s['slug']}}}\n**Priority:** `{s['priority']}` | **Papers:** {gs_str} | **Cluster:** {cluster}\n\n> {_BULB} **Memory Hook:** {memo}\n\n{s.get('relevance','')}\n\n### Key Facts\n{facts_md}\n\n### Static Anchors\n{anchors}\n\n### Answer Skeleton\n**Intro:** {intro}\n\n{body_md}\n\n**Conclusion direction:** {concl}\n\n### Traps\n{traps_md}\n{deep_section}")
-    
-    obsidian_note = f"{frontmatter}\n\n# CA Brief {_DASH} {RECOVER_DATE}\n\n{human_brief}\n\n---\n\n## Story Index\n{story_table}\n\n---\n{''.join(story_sections)}---\n*Generated: {now_utc} | NB6 v3.1 Recovery*"
-    
-    today_obj = _date.fromisoformat(RECOVER_DATE)
-    month_folder = today_obj.strftime("%m-%B")
-    vault_ca_dir = f"{OBSIDIAN_VOLUME}/UPSC_2026/01_Current_Affairs/2026/{month_folder}"
-    os.makedirs(vault_ca_dir, exist_ok=True)
-    note_path = f"{vault_ca_dir}/CA_{RECOVER_DATE}.md"
-    with open(note_path, "w", encoding="utf-8") as f:
-        f.write(obsidian_note)
-    print(f"  \u2705 Obsidian note saved: {note_path} ({len(obsidian_note):,} chars)")
-
-print(f"\n{'\u2550'*60}")
-print(f"  RECOVERY COMPLETE — {len(MISSED_DATES)} dates backfilled")
-print(f"{'\u2550'*60}")
+# ── 5. Final verification ──
+final_counts = spark.sql(f"""
+    SELECT date, COUNT(*) as stories FROM {CATALOG}.{SCHEMA}.stories GROUP BY date ORDER BY date
+""").collect()
+_sep_heavy = "\u2550" * 60
+_sep_light = "\u2500" * 30
+print("\n" + _sep_heavy)
+print("  FINAL STORY COUNTS BY DATE")
+print(_sep_heavy)
+total = 0
+for r in final_counts:
+    total += r["stories"]
+    print(f"  {r['date']}: {r['stories']} stories")
+print(f"  {_sep_light}")
+print(f"  TOTAL: {total} stories across {len(final_counts)} days")
 
 # COMMAND ----------
 
