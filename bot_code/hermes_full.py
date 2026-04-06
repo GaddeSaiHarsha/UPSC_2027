@@ -3,7 +3,7 @@ HERMES — Full UPSC AIR-1 Mentor Bot
 =====================================
 Groq backend (Llama 3.3 70B) — Free tier, ~$0/month
 Same commands as your main bot + 15 new Hermes-exclusive commands
-Shares your SQLite DB (read/write safe with WAL mode)
+Own dedicated SQLite DB (.hermes_memory.db) with WAL mode
 
 HERMES IS:
   A 20+ year UPSC master who has produced AIR 1, 2, 5, 11 candidates.
@@ -37,7 +37,7 @@ SETUP (Azure VM):
   export GROQ_API_KEY=<from console.groq.com — free>
   export TELEGRAM_USER_ID=<your numeric ID>
   export DATABRICKS_TOKEN=<your existing PAT>
-  export MEMORY_DB=<path to .upsc_memory.db — same as main bot>
+  export HERMES_DB=<path to .hermes_memory.db — Hermes-only DB>
   python3 hermes_full.py
 """
 
@@ -74,7 +74,7 @@ SQL_WAREHOUSE_ID = os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID", "589dccbdf8c6e4
 
 _HOME       = Path.home()
 VAULT_PATH  = Path(os.environ.get("VAULT_PATH",  str(_HOME / "UPSC_2026")))
-DB_PATH     = Path(os.environ.get("MEMORY_DB",   str(_HOME / "UPSC_2026" / ".upsc_memory.db")))
+DB_PATH     = Path(os.environ.get("HERMES_DB", os.environ.get("MEMORY_DB", str(_HOME / "UPSC_2026" / ".hermes_memory.db"))))
 VOLUME_BASE = "/Volumes/upsc_catalog/rag/obsidian_ca/Daily_Practice"
 
 GROQ_MODEL       = "llama-3.3-70b-versatile"
