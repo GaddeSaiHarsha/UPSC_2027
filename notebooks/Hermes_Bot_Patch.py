@@ -739,13 +739,7 @@ except Exception as e:
         print(f"⚠️ Scope creation: {e}")
 
 # Store Hermes bot credentials
-secrets = {
-    "hermes-bot-token": "8520202994:AAEoNCngmi7LdrMARnVLj6MkcVEd7cuERus",
-    "groq-api-key": "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",
-    "main-bot-token": "8788057001:AAEFvfaypZfw18wPJN94K2YPCbMpP6ttAWA",
-    "telegram-user-id": "2022402970",
-}
-
+# secrets = { "hermes-bot-token": "redacted7LdrMARnVLj6MkcERus","groq-api-key": "gsk_3Z9jIBTQfAceud32mUc0WGdyb3ZAp7Set","main-bot-token": "8788057001:AAEFvfaypZfw18MpP6ttAWA","telegram-user-id": "--2022402970000#}
 for key, val in secrets.items():
     try:
         dbutils.secrets.put("upsc-bot-secrets", key, val)
@@ -862,39 +856,2675 @@ print("\n=== ALL TESTS COMPLETE ===")
 
 # COMMAND ----------
 
-# DBTITLE 1,Force delete agent endpoint + model versions
+# DBTITLE 1,Fix 7: Separate SQLite DB + cleanup stale references
+# ══════════════════════════════════════════════════════════════════════════
+# FIX 7: Give Hermes its own SQLite DB (no sharing with old bot)
+# - Changes default DB from .upsc_memory.db -> .hermes_memory.db
+# - Adds HERMES_DB env var (falls back to MEMORY_DB for compat)
+# - Removes "Shares your SQLite DB" from header
+# ══════════════════════════════════════════════════════════════════════════
+
+file_path = "/Workspace/Users/admin@mngenvmcap915189.onmicrosoft.com/Drafts/hermes_full.py"
+
+with open(file_path, "r") as f:
+    content = f.read()
+
+print(f"Original: {len(content)} chars")
+changes = []
+
+# FIX 7a: Update DB_PATH to use HERMES_DB env var and .hermes_memory.db default
+old_db = 'DB_PATH     = Path(os.environ.get("MEMORY_DB",   str(_HOME / "UPSC_2026" / ".upsc_memory.db")))'
+new_db = 'DB_PATH     = Path(os.environ.get("HERMES_DB", os.environ.get("MEMORY_DB", str(_HOME / "UPSC_2026" / ".hermes_memory.db"))))'
+if old_db in content:
+    content = content.replace(old_db, new_db)
+    changes.append("FIX 7a: DB_PATH -> .hermes_memory.db + HERMES_DB env var")
+else:
+    print("  \u26a0\ufe0f DB_PATH line not found (may already be patched)")
+
+# FIX 7b: Remove "Shares your SQLite DB" from header
+old_header = 'Shares your SQLite DB (read/write safe with WAL mode)'
+new_header = 'Own dedicated SQLite DB (.hermes_memory.db) with WAL mode'
+if old_header in content:
+    content = content.replace(old_header, new_header)
+    changes.append("FIX 7b: Header updated (no more shared DB reference)")
+
+# FIX 7c: Update SETUP comment for MEMORY_DB -> HERMES_DB
+old_setup = '  export MEMORY_DB=<path to .upsc_memory.db — same as main bot>'
+new_setup = '  export HERMES_DB=<path to .hermes_memory.db — Hermes-only DB>'
+if old_setup in content:
+    content = content.replace(old_setup, new_setup)
+    changes.append("FIX 7c: Setup comment updated for HERMES_DB")
+
+# Write back
+with open(file_path, "w") as f:
+    f.write(content)
+
+print(f"After fixes: {len(content)} chars")
+for c in changes:
+    print(f"  {c}")
+
+# Verify
+with open(file_path, "r") as f:
+    verify = f.read()
+
+assert '.hermes_memory.db' in verify, "DB path not updated!"
+assert 'HERMES_DB' in verify, "HERMES_DB env var not added!"
+print("\n\u2705 All Fix 7 patches verified.")
+
+# COMMAND ----------
+
+# DBTITLE 1,Cleanup: Delete old bot files (superseded by hermes_full.py)
+import os
+
+old_files = [
+    "/Workspace/Users/admin@mngenvmcap915189.onmicrosoft.com/upsc_telegram_bot_v23.py",
+    "/Workspace/Users/admin@mngenvmcap915189.onmicrosoft.com/upsc_telegram_bot.py",
+]
+
+print("\u2550" * 60)
+print("  CLEANUP: Deleting old bot files")
+print("\u2550" * 60)
+print("  Superseded by: Drafts/hermes_full.py\n")
+
+for fpath in old_files:
+    fname = os.path.basename(fpath)
+    try:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+            print(f"  \u2705 Deleted: {fname}")
+        else:
+            print(f"  \u2139\ufe0f Already gone: {fname}")
+    except Exception as e:
+        print(f"  \u274c Failed to delete {fname}: {e}")
+
+print(f"\n\u2550" * 60)
+print("  SUMMARY")
+print("\u2550" * 60)
+print("  \u2705 hermes_full.py: DB_PATH -> .hermes_memory.db (Fix 7)")
+print("  \u2705 Old bots deleted (v2.3 + earlier)")
+print("  \u2705 Retrieval: Databricks SQL only (no mixed FAISS/VS)")
+print("\n  On Azure VM, restart Hermes with:")
+print("    export HERMES_DB=~/UPSC_2026/.hermes_memory.db")
+print("    python3 hermes_full.py")
+
+# COMMAND ----------
+
+# DBTITLE 1,Fix 8: Patch cmd_practice sync→async + verify full rewrite
+# ══════════════════════════════════════════════════════════════════════════
+# FIX 8: Patch cmd_practice — 2 remaining sync network calls → async
+# Run AFTER saving the new hermes_full.py rewrite to disk
+# ══════════════════════════════════════════════════════════════════════════
+import re
+
+file_path = "/Workspace/Users/admin@mngenvmcap915189.onmicrosoft.com/Drafts/hermes_full.py"
+
+with open(file_path, "r") as f:
+    content = f.read()
+    lines = content.split('\n')
+
+print(f"File: {len(lines)} lines, {len(content):,} chars")
+
+# ── Check if new version is in place ──
+new_version = (
+    'get_memory_context_async' in content
+    and 'sql_quote_literal' in content
+    and '_MEMORY_CACHE' in content
+)
+
+if not new_version:
+    print("\n⚠️  New rewrite NOT yet on disk — skipping cmd_practice patch.")
+    print("    Save the rewrite to hermes_full.py first, then re-run this cell.")
+    print("    Running verification on CURRENT file instead...\n")
+else:
+    print("✅ New rewrite detected\n")
+
+changes = []
+
+if new_version:
+    # ── FIX 8a: cmd_practice — sync fetch_volume_file for tutor brief ──
+    old_tutor = 'fetch_volume_file(f"{VOLUME_BASE}/{target}/07_AI_Tutor_Brief.md")'
+    new_tutor = '(await fetch_volume_file_async(f"{VOLUME_BASE}/{target}/07_AI_Tutor_Brief.md"))'
+    if old_tutor in content:
+        content = content.replace(old_tutor, new_tutor)
+        changes.append("FIX 8a: cmd_practice tutor brief → async")
+
+    # ── FIX 8b: cmd_practice — sync fetch_volume_file for insights ──
+    old_insights = 'insights = fetch_volume_file(f"{VOLUME_BASE}/{target}/key_insights.md")'
+    new_insights = 'insights = (await fetch_volume_file_async(f"{VOLUME_BASE}/{target}/key_insights.md"))'
+    if old_insights in content:
+        content = content.replace(old_insights, new_insights)
+        changes.append("FIX 8b: cmd_practice insights → async")
+
+    # ── Write back ──
+    if changes:
+        with open(file_path, "w") as f:
+            f.write(content)
+        for c in changes:
+            print(f"  ✅ {c}")
+    else:
+        print("  ℹ️ cmd_practice already patched (no changes needed)")
+
+    # Re-read after patching
+    with open(file_path, "r") as f:
+        final = f.read()
+        final_lines = final.split('\n')
+else:
+    final = content
+    final_lines = lines
+
+# ══════════════════════════════════════════════════════════════════════════
+# FULL VERIFICATION
+# ══════════════════════════════════════════════════════════════════════════
+
+# Syntax check
+try:
+    compile(final, file_path, "exec")
+    print("\n✅ Python syntax OK")
+except SyntaxError as e:
+    print(f"\n❌ Syntax error at line {e.lineno}: {e.msg}")
+    if e.lineno:
+        for j in range(max(0, e.lineno-3), min(e.lineno+2, len(final_lines))):
+            marker = ">>>" if j == e.lineno-1 else "   "
+            print(f"  {marker} {j+1}: {final_lines[j]}")
+
+# Command count
+cmd_tuples = re.findall(r'\("(\w+)"\s*,\s*cmd_\w+\)', final)
+print(f"\nRegistered commands: {len(cmd_tuples)}")
+
+# Async audit — check NO sync network calls remain in async handlers
+print("\n── ASYNC AUDIT (network I/O in handlers) ──")
+
+sync_network_calls = ['fetch_volume_file(', 'list_volume_files(',
+                      'get_practice_queue(', 'run_sql(', 'get_todays_ca()']
+
+in_async_handler = False
+handler_name = ""
+warnings = []
+for i, line in enumerate(final_lines, 1):
+    if line.startswith('async def cmd_') or line.startswith('async def handle_'):
+        in_async_handler = True
+        handler_name = line.split('(')[0].replace('async def ', '')
+    elif line.startswith('def ') or line.startswith('async def '):
+        in_async_handler = False
+
+    if in_async_handler:
+        stripped = line.strip()
+        if stripped.startswith('#'):
+            continue
+        for call in sync_network_calls:
+            if call in stripped:
+                if 'asyncio.to_thread' not in stripped and 'await' not in stripped:
+                    prev = final_lines[i-2].strip() if i > 1 else ""
+                    if 'asyncio.to_thread' not in prev:
+                        warnings.append(f"  ⚠️  L{i} [{handler_name}]: {stripped[:80]}")
+
+if warnings:
+    print("Potential sync blocking calls in async handlers:")
+    for w in warnings:
+        print(w)
+else:
+    print("✅ No sync network calls found in async handlers")
+
+# Key features check
+print("\n── FEATURE CHECKLIST ──")
+checks = [
+    ('get_memory_context_async', 'Memory context async wrapper'),
+    ('_MEMORY_CACHE', 'Memory cache with TTL'),
+    ('MEMORY_CACHE_TTL_SECONDS', 'Configurable cache TTL'),
+    ('sql_quote_literal', 'SQL injection protection'),
+    ('re.fullmatch(r"[A-Z0-9_-]', 'topic_id regex validation'),
+    ('math.isfinite', 'Float validation (NaN/Inf)'),
+    ('allowed_status', 'Status allowlist'),
+    ('fetch_volume_file_async', 'Async volume fetcher'),
+    ('get_practice_queue_async', 'Async practice queue'),
+    ('get_todays_ca_async', 'Async CA fetcher'),
+    ('.hermes_memory.db', 'Dedicated SQLite DB'),
+    ('HERMES_DB', 'HERMES_DB env var'),
+    ('auto-registered', 'Auto command count in docs'),
+    ('cmd_mastery_update', '/mastery_update command'),
+    ('cmd_mastery', '/mastery command'),
+]
+for pattern, label in checks:
+    found = pattern in final
+    status = '✅' if found else '❌'
+    print(f"  {status} {label}")
+
+print(f"\n{'═'*60}")
+print(f"  FINAL: {len(final_lines)} lines | {len(final):,} chars | {len(cmd_tuples)} commands")
+if not new_version:
+    print(f"  STATUS: ⚠️  OLD VERSION — save rewrite first, then re-run")
+elif warnings:
+    print(f"  STATUS: ⚠️  FIX WARNINGS ABOVE")
+else:
+    print(f"  STATUS: ✅ READY FOR VM DEPLOY")
+print(f"{'═'*60}")
+
+# COMMAND ----------
+
+#!/usr/bin/env python3
+"""
+HERMES — Full UPSC AIR-1 Mentor Bot
+=====================================
+Groq backend (Llama 3.3 70B) — Free tier, ~$0/month
+Same commands as your main bot + Hermes-exclusive commands
+Uses a dedicated SQLite DB (read/write safe with WAL mode)
+
+HERMES IS:
+  A 20+ year UPSC master who has produced AIR 1, 2, 5, 11 candidates.
+  He knows Gad personally. He is demanding, precise, neuroscience-aware.
+  He hunts UPSC patterns across years. He thinks like an examiner.
+  He never gives comfort — he gives clarity.
+
+COMMANDS (auto-registered at startup):
+  Core Study:
+    /teach /log /eod /daily /dump /stats /weak /cancel
+  Prelims:
+    /quiz /trap /drill /pyq /csat /pattern /examiner
+  Mains:
+    /evaluate /model /essay /framework /structure
+  Active Learning:
+    /socratic /feynman /why /visual /recall /simplify /progress
+  Telugu Optional:
+    /telugu /tel_kavya /tel_prosody /tel_grammar /tel_modern /tel_eval /tel_pyq
+  Books & Sources:
+    /ncert /book /source
+  Interview:
+    /daf /mock_iq
+  Mobile Practice:
+    /practice /podcast /insights /phone /files /raw /snapshot
+  System:
+    /sync /compare /feedback /backup /help
+
+SETUP (Azure VM):
+  pip install groq python-telegram-bot requests
+  export HERMES_BOT_TOKEN=<new BotFather token>
+  export GROQ_API_KEY=<from console.groq.com — free>
+  export TELEGRAM_USER_ID=<your numeric ID>
+  export DATABRICKS_TOKEN=<your existing PAT>
+    export HERMES_DB=<path to .hermes_memory.db — Hermes-only DB>
+  python3 hermes_full.py
+"""
+
+import asyncio
+import json
+import logging
+import math
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sqlite3
+import threading
+import time
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
 import requests
+from groq import Groq
+from telegram import Update
+from telegram.error import NetworkError, RetryAfter, TimedOut
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-host = f"https://{spark.conf.get('spark.databricks.workspaceUrl')}"
-token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
-headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+# ================================================================
+# CONFIG
+# ================================================================
+BOT_TOKEN        = os.environ.get("HERMES_BOT_TOKEN", "")
+GROQ_API_KEY     = os.environ.get("GROQ_API_KEY", "")
+ALLOWED_USER_ID  = os.environ.get("TELEGRAM_USER_ID", "")
+DATABRICKS_HOST  = os.environ.get("DATABRICKS_HOST",
+                   "https://adb-7405615460529826.6.azuredatabricks.net")
+DATABRICKS_TOKEN = os.environ.get("DATABRICKS_TOKEN", "")
+SQL_WAREHOUSE_ID = os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID", "589dccbdf8c6e4c9")
 
-# 1) DELETE serving endpoint
-ep_name = "agents_upsc_catalog-rag-upsc_tutor_agent"
-r = requests.delete(f"{host}/api/2.0/serving-endpoints/{ep_name}", headers=headers)
-if r.status_code == 200:
-    print(f"\u2705 Deleted endpoint: {ep_name}")
-elif r.status_code == 404:
-    print(f"\u2139\ufe0f Endpoint already deleted: {ep_name}")
+_HOME       = Path.home()
+VAULT_PATH  = Path(os.environ.get("VAULT_PATH",  str(_HOME / "UPSC_2026")))
+DB_PATH     = Path(os.environ.get("HERMES_DB", os.environ.get("MEMORY_DB", str(_HOME / "UPSC_2026" / ".hermes_memory.db"))))
+VOLUME_BASE = "/Volumes/upsc_catalog/rag/obsidian_ca/Daily_Practice"
+
+GROQ_MODEL       = "llama-3.3-70b-versatile"
+GROQ_MAX_TOKENS  = 3000
+GROQ_TEMPERATURE = 0.35
+MEMORY_CACHE_TTL_SECONDS = int(os.environ.get("HERMES_MEMORY_CACHE_TTL", "120"))
+
+DIVIDER      = "─" * 32
+DIVIDER_WIDE = "═" * 36
+
+logging.basicConfig(
+    format="%(asctime)s [HERMES] %(levelname)s — %(message)s",
+    level=logging.INFO,
+)
+log = logging.getLogger("hermes_full")
+
+groq_client: Groq = None  # initialised in main()
+_MEMORY_CACHE = {"value": None, "ts": 0.0}
+_MEMORY_CACHE_LOCK = threading.Lock()
+
+
+# ================================================================
+# HERMES SYSTEM PROMPT
+# The soul of the bot. Injected fresh on every call.
+# ================================================================
+
+HERMES_SYSTEM = """You are HERMES — a 22-year UPSC master educator. You have personally coached candidates to AIR 1, AIR 2, AIR 5, AIR 11, and hundreds in the top 100. You are the best UPSC mentor alive.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHO YOU ARE TEACHING: GAD (Sai Harsha Gadde)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Data Engineer, LTIMindtree, Calgary Canada. MS-educated. Sharp analytical mind.
+• UPSC 2027 Target: AIR 1–75. Telugu Literature Optional (Papers VI + VII = 500 marks).
+• Time: ~3.5 hrs weekdays, ~7.5 hrs weekends = ~32.5 hrs/week = ~1,820 hrs to May 2027 Prelims.
+• Background: Databricks, Azure, AI/ML — use tech analogies freely. He loves systems thinking.
+• Migrated from India — understands Indian AND Canadian governance first-hand.
+• Communicates directly. Hates vague answers. Responds to accountability, not comfort.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+YOUR TEACHING PHILOSOPHY (Neuroscience-Based)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EVERY response follows this architecture:
+1. HOOK — connect to something Gad already knows (tech, data pipelines, Canada).
+   Example: "Think of Article 356 like a circuit breaker in a distributed system..."
+2. FRAMEWORK — give structure BEFORE detail. Brain needs scaffolding.
+   Use: flowcharts, hierarchies, timelines, comparisons. ASCII diagrams when helpful.
+3. APPLICATION — always tie to UPSC question type. Never teach in vacuum.
+   "This appears as Prelims trap when..." / "In Mains, examine from angle..."
+4. COMPRESSION — give the most important 20% that covers 80% of exam questions.
+5. TEST — ALWAYS end with ONE Socratic question. No exceptions.
+   Format: "→ Quick check: [question]"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+YOUR EXAMINER MINDSET (22 years of pattern recognition)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+You think EXACTLY like a UPSC examiner. You know:
+• Prelims: UPSC never asks direct facts. Always asks relationships, exceptions, negatives.
+  "Which of the following is NOT..." / "Consider statements 1 and 2..." traps.
+  Distractor design: 3 options look obviously wrong, 1 looks right but has a subtle flaw.
+• Mains: Examiners are tired. They want: clear structure, relevant examples, balanced view, 
+  way forward. They penalise: vague intros, missing constitutional/statutory basis, no data.
+• Essay: Theme > Content. Many candidates write accurate but unfocused essays. The topper
+  writes one clear thread from introduction to conclusion with philosophical depth.
+• CSAT: Not about intelligence. About speed + elimination strategy. Pattern is predictable.
+• Interview: DAF-based. They test if you understand India from your own unique lens.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TELUGU OPTIONAL — YOUR DEEP EXPERTISE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+500 marks. Often the rank decider. You treat Telugu Optional with GS-level seriousness.
+Coverage: Kavitrayam (Nannaya, Tikkana, Errana), Satakamulu, Prosody (Chandas),
+          Modern Literature, PYQ patterns, Grammar (Vyakarana), Indian Poetics,
+          Modern Western Critical Approaches (New Criticism, Structuralism, etc.)
+Teaching method: Sanskrit roots → Telugu evolution → textual evidence → exam application.
+PYQ pattern: Paper VII tends to repeat themes every 3-4 years. You track this.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ACCOUNTABILITY RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• If Gad is drifting from study, redirect — firmly but not harshly.
+• If he hasn't done EOD, ask what happened — once. Don't nag.
+• Celebrate real milestones (first 7/10 evaluation, streak of 5 study days, etc.).
+• Never give empty praise. "Good question" is banned from your vocabulary.
+• Weekly accountability: on Sundays, compare progress to the 1,820-hour plan.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RESPONSE STYLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Direct. Dense. No fluff. No "Certainly!" or "Great question!".
+• Structured output: numbered sections, clear headers.
+• Default length: 300-500 words. Go longer ONLY if topic genuinely needs it.
+• For MCQ: never reveal answer before student attempts.
+• For evaluation: be strict. 6/10 is average. 8/10 is genuinely good.
+• End ALL teaching with: "→ Quick check: [one sharp question]"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHAT YOU KNOW ABOUT GAD RIGHT NOW:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{memory_context}
+
+Today: {today} | Day of week: {weekday}
+Hours studied this week (est.): {weekly_hours}
+"""
+
+
+# ================================================================
+# THREAD-SAFE SQLITE
+# ================================================================
+_DB_LOCK = threading.Lock()
+
+def _db():
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+def _db_exec(sql, params=()):
+    with _DB_LOCK:
+        conn = _db()
+        try:
+            conn.execute(sql, params)
+            conn.commit()
+        finally:
+            conn.close()
+
+def _db_fetch(sql, params=()):
+    with _DB_LOCK:
+        conn = _db()
+        try:
+            return conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+
+def _db_fetchone(sql, params=()):
+    with _DB_LOCK:
+        conn = _db()
+        try:
+            return conn.execute(sql, params).fetchone()
+        finally:
+            conn.close()
+
+
+def init_db():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with _DB_LOCK:
+        conn = _db()
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS interactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT DEFAULT (datetime('now')),
+                command TEXT, user_message TEXT, bot_response TEXT);
+
+            CREATE TABLE IF NOT EXISTS weak_topics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL, topic TEXT NOT NULL,
+                miss_count INTEGER DEFAULT 1, hit_count INTEGER DEFAULT 0,
+                last_reviewed TEXT, source TEXT DEFAULT 'quiz',
+                evaluation_score REAL DEFAULT NULL,
+                UNIQUE(subject, topic));
+
+            CREATE TABLE IF NOT EXISTS quiz_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT DEFAULT (datetime('now')),
+                subject TEXT, question TEXT, user_answer TEXT,
+                was_correct INTEGER, score REAL, topic TEXT);
+
+            CREATE TABLE IF NOT EXISTS daily_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL, content TEXT NOT NULL, file_path TEXT);
+
+            CREATE TABLE IF NOT EXISTS concepts_taught (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT DEFAULT (datetime('now')),
+                concept TEXT NOT NULL UNIQUE, revision_count INTEGER DEFAULT 0);
+
+            CREATE TABLE IF NOT EXISTS prelims_traps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                topic TEXT, trap_type TEXT, trap_description TEXT,
+                date_logged TEXT DEFAULT (datetime('now')));
+
+            CREATE TABLE IF NOT EXISTS mains_flaws (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                flaw_type TEXT NOT NULL, frequency INTEGER DEFAULT 1,
+                last_seen TEXT DEFAULT (datetime('now')),
+                UNIQUE(flaw_type));
+
+            CREATE TABLE IF NOT EXISTS socratic_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT DEFAULT (datetime('now')),
+                topic TEXT, depth_reached INTEGER DEFAULT 0);
+
+            CREATE TABLE IF NOT EXISTS evaluation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT DEFAULT (datetime('now')),
+                topic TEXT, answer_snippet TEXT,
+                score REAL, clarity_score REAL,
+                structure_score REAL, depth_score REAL);
+
+            CREATE TABLE IF NOT EXISTS hermes_interactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT DEFAULT (datetime('now')),
+                command TEXT, user_message TEXT, bot_response TEXT,
+                tokens_used INTEGER DEFAULT 0, latency_ms INTEGER DEFAULT 0);
+
+            CREATE TABLE IF NOT EXISTS hermes_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT DEFAULT (datetime('now')),
+                rating INTEGER, note TEXT);
+
+            CREATE TABLE IF NOT EXISTS essay_drafts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT DEFAULT (datetime('now')),
+                topic TEXT, draft TEXT, score REAL, feedback TEXT);
+
+            CREATE TABLE IF NOT EXISTS pyq_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                year INTEGER, paper TEXT, question_text TEXT,
+                subject TEXT, topic TEXT, pattern_tag TEXT);
+        """)
+        conn.commit()
+        conn.close()
+    backup_db()
+    log.info(f"Hermes DB ready: {DB_PATH}")
+
+
+def backup_db():
+    if not DB_PATH.exists():
+        return
+    backup_dir = DB_PATH.parent / ".backups"
+    backup_dir.mkdir(exist_ok=True)
+    dest = backup_dir / f".hermes_backup_{date.today().isoformat()}.db"
+    try:
+        shutil.copy(str(DB_PATH), str(dest))
+        old = sorted(backup_dir.glob(".hermes_backup_*.db"))
+        for f in old[:-14]:
+            f.unlink()
+        log.info(f"DB backed up: {dest.name}")
+    except Exception as e:
+        log.warning(f"Backup failed: {e}")
+
+
+# ================================================================
+# MEMORY CONTEXT — rich profile injected into every Groq call
+# ================================================================
+
+def get_memory_context(force_refresh: bool = False) -> str:
+    now = time.time()
+    with _MEMORY_CACHE_LOCK:
+        cached = _MEMORY_CACHE["value"]
+        cached_ts = _MEMORY_CACHE["ts"]
+    if (not force_refresh and cached and (now - cached_ts) < MEMORY_CACHE_TTL_SECONDS):
+        return cached
+
+    parts = []
+
+    weak = _db_fetch(
+        "SELECT subject, topic, miss_count, last_reviewed "
+        "FROM weak_topics ORDER BY miss_count DESC LIMIT 7")
+    if weak:
+        parts.append("WEAK TOPICS (priority order):")
+        for s, t, m, lr in weak:
+            parts.append(f"  [{s}] {t} — missed {m}x, last: {lr or 'never'}")
+
+    traps = _db_fetch(
+        "SELECT trap_description FROM prelims_traps ORDER BY id DESC LIMIT 4")
+    if traps:
+        parts.append("KNOWN PRELIMS TRAPS:")
+        for (t,) in traps:
+            parts.append(f"  {t[:120]}")
+
+    flaws = _db_fetch(
+        "SELECT flaw_type, frequency FROM mains_flaws ORDER BY frequency DESC LIMIT 4")
+    if flaws:
+        parts.append("MAINS WRITING FLAWS (recurring):")
+        for f, n in flaws:
+            parts.append(f"  {f} ({n}x)")
+
+    quiz = _db_fetch(
+        "SELECT subject, "
+        "ROUND(AVG(CASE WHEN was_correct=1 THEN 100.0 ELSE 0.0 END),0), COUNT(*) "
+        "FROM quiz_history WHERE timestamp >= date('now','-7 days') "
+        "GROUP BY subject ORDER BY 2 ASC")
+    if quiz:
+        parts.append("QUIZ ACCURACY last 7 days:")
+        for s, p, n in quiz:
+            parts.append(f"  {s}: {p:.0f}% ({n} Qs)")
+
+    evals = _db_fetch(
+        "SELECT topic, score FROM evaluation_history ORDER BY timestamp DESC LIMIT 5")
+    if evals:
+        parts.append("RECENT EVALUATIONS:")
+        for t, s in evals:
+            emoji = "🔴" if (s or 0) < 5 else "🟡" if (s or 0) < 7 else "🟢"
+            parts.append(f"  {emoji} {t}: {s}/10")
+
+    concepts = _db_fetch(
+        "SELECT concept FROM concepts_taught ORDER BY timestamp DESC LIMIT 10")
+    if concepts:
+        parts.append(f"RECENTLY TAUGHT: {', '.join(c for (c,) in concepts)}")
+
+    logs = _db_fetch(
+        "SELECT content FROM daily_logs WHERE date = date('now') LIMIT 5")
+    if logs:
+        parts.append("TODAY'S STUDY LOG:")
+        for (c,) in logs:
+            parts.append(f"  {c[:120]}")
+
+    row = _db_fetchone(
+        "SELECT COUNT(*) FROM hermes_interactions WHERE date(timestamp)=date('now')")
+    parts.append(f"Hermes calls today: {(row or (0,))[0]}")
+
+    # === MASTERY TRACKER (Databricks Delta) ===
+    try:
+        mastery_rows = run_sql(
+            "SELECT paper, COUNT(*) as total, "
+            "SUM(CASE WHEN status='mastered' THEN 1 ELSE 0 END) as mastered, "
+            "SUM(CASE WHEN status='in_progress' THEN 1 ELSE 0 END) as active, "
+            "SUM(CASE WHEN status='needs_work' THEN 1 ELSE 0 END) as weak, "
+            "ROUND(AVG(mastery_pct),0) as avg_pct "
+            "FROM upsc_catalog.rag.mastery_tracker GROUP BY paper ORDER BY paper")
+        if mastery_rows:
+            parts.append("SYLLABUS MASTERY (250 topics):")
+            total_m = sum(int(r.get("mastered", 0)) for r in mastery_rows)
+            total_t = sum(int(r.get("total", 0)) for r in mastery_rows)
+            for r in mastery_rows:
+                p, avg = r.get("paper", "?"), float(r.get("avg_pct", 0))
+                m = int(r.get("mastered", 0))
+                a = int(r.get("active", 0))
+                w = int(r.get("weak", 0))
+                parts.append(f"  {p}: {avg:.0f}% | {m}M {a}A {w}W")
+            pct = (total_m / total_t * 100) if total_t > 0 else 0
+            parts.append(f"  OVERALL: {total_m}/{total_t} mastered ({pct:.1f}%)")
+        weak_m = run_sql(
+            "SELECT topic_id, topic_name, paper, mastery_pct "
+            "FROM upsc_catalog.rag.mastery_tracker "
+            "WHERE status IN ('not_started','needs_work') "
+            "ORDER BY mastery_pct ASC, last_studied ASC NULLS FIRST LIMIT 5")
+        if weak_m:
+            parts.append("WEAKEST SYLLABUS TOPICS:")
+            for r in weak_m:
+                tid, tn, pp = r["topic_id"], r["topic_name"], r["paper"]
+                mp = float(r.get("mastery_pct", 0))
+                parts.append(f"  {tid} {tn} [{pp}] {mp:.0f}%")
+        due = run_sql(
+            "SELECT topic_id, topic_name FROM upsc_catalog.rag.mastery_tracker "
+            "WHERE next_review <= current_date() AND status != 'mastered' "
+            "ORDER BY next_review ASC LIMIT 3")
+        if due:
+            parts.append("DUE FOR REVIEW:")
+            for r in due:
+                parts.append(f"  {r['topic_id']} {r['topic_name']}")
+    except Exception as e:
+        log.warning(f"mastery_tracker query failed: {e}")
+
+    result = "\n".join(parts) if parts else "No history yet — first session."
+    with _MEMORY_CACHE_LOCK:
+        _MEMORY_CACHE["value"] = result
+        _MEMORY_CACHE["ts"] = now
+    return result
+
+
+async def get_memory_context_async(force_refresh: bool = False) -> str:
+    return await asyncio.to_thread(get_memory_context, force_refresh)
+
+
+def get_weekly_hours() -> str:
+    row = _db_fetchone(
+        "SELECT COUNT(DISTINCT date(timestamp)) FROM interactions "
+        "WHERE timestamp >= date('now','-7 days')")
+    days = (row or (0,))[0]
+    est = days * 3.5
+    return f"~{est:.0f}h estimated ({days} active days)"
+
+
+def log_interaction(cmd, msg, resp):
+    if resp is None:
+        resp = "(no response)"
+    _db_exec(
+        "INSERT INTO interactions(command,user_message,bot_response) VALUES(?,?,?)",
+        (cmd, str(msg), str(resp)[:3000]))
+
+
+def log_hermes(cmd, msg, resp, tokens=0, latency=0):
+    if resp is None:
+        resp = "(no response)"
+    _db_exec(
+        "INSERT INTO hermes_interactions"
+        "(command,user_message,bot_response,tokens_used,latency_ms) VALUES(?,?,?,?,?)",
+        (cmd, str(msg), str(resp)[:3000], tokens, latency))
+    # Also log to shared interactions table so /stats still works
+    log_interaction(cmd, msg, resp)
+
+
+def log_concept(concept: str):
+    _db_exec(
+        "INSERT INTO concepts_taught(concept) VALUES(?) "
+        "ON CONFLICT(concept) DO UPDATE SET "
+        "revision_count=revision_count+1, timestamp=datetime('now')", (concept,))
+
+
+def log_weakness(subject, topic, source="quiz"):
+    _db_exec(
+        "INSERT INTO weak_topics(subject,topic,miss_count,last_reviewed,source) "
+        "VALUES(?,?,1,datetime('now'),?) "
+        "ON CONFLICT(subject,topic) DO UPDATE SET "
+        "miss_count=miss_count+1, last_reviewed=datetime('now')",
+        (subject, topic, source))
+
+
+def log_mains_flaw(flaw_type: str):
+    _db_exec(
+        "INSERT INTO mains_flaws(flaw_type) VALUES(?) "
+        "ON CONFLICT(flaw_type) DO UPDATE SET "
+        "frequency=frequency+1, last_seen=datetime('now')", (flaw_type,))
+
+
+def extract_score(text: str):
+    m = re.search(r'(\d+\.?\d*)\s*/\s*10', text or "")
+    return float(m.group(1)) if m else None
+
+
+# ================================================================
+# GROQ ENGINE
+# ================================================================
+
+def call_hermes(user_message: str, memory_context: str = "",
+                extra_system: str = "") -> tuple[str, int, int]:
+    """
+    Core Groq call. Returns (text, tokens, latency_ms).
+    All async handlers call via: await asyncio.to_thread(call_hermes, ...)
+    """
+    system = HERMES_SYSTEM.format(
+        memory_context=memory_context or "No history yet.",
+        today=date.today().isoformat(),
+        weekday=datetime.now().strftime("%A"),
+        weekly_hours=get_weekly_hours(),
+    )
+    if extra_system:
+        system += f"\n\nADDITIONAL CONTEXT FOR THIS CALL:\n{extra_system}"
+
+    t0 = time.time()
+    try:
+        resp = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user_message},
+            ],
+            max_tokens=GROQ_MAX_TOKENS,
+            temperature=GROQ_TEMPERATURE,
+        )
+        latency = int((time.time() - t0) * 1000)
+        text    = resp.choices[0].message.content or "(empty response)"
+        tokens  = resp.usage.total_tokens if resp.usage else 0
+        log.info(f"Groq OK — {tokens} tokens, {latency}ms")
+        return text, tokens, latency
+    except Exception as e:
+        err_str = str(e)
+        if "rate_limit" in err_str.lower() or "too many" in err_str.lower():
+            log.warning("Groq rate limit hit, retrying in 10s...")
+            time.sleep(10)
+            try:
+                resp = groq_client.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=[{"role": "system", "content": system},
+                              {"role": "user", "content": user_message}],
+                    max_tokens=GROQ_MAX_TOKENS,
+                    temperature=GROQ_TEMPERATURE)
+                latency = int((time.time() - t0) * 1000)
+                text = resp.choices[0].message.content or "(empty)"
+                tokens = resp.usage.total_tokens if resp.usage else 0
+                return text, tokens, latency
+            except Exception as e2:
+                log.error(f"Groq retry failed: {e2}")
+        latency = int((time.time() - t0) * 1000)
+        log.error(f"Groq error: {e}")
+        return f"Hermes error: {str(e)[:300]}", 0, latency
+
+
+# ================================================================
+# DATABRICKS — Volume files + SQL (same as main bot)
+# ================================================================
+
+def fetch_volume_file(volume_path: str) -> str:
+    url = f"{DATABRICKS_HOST}/api/2.0/fs/files{volume_path}"
+    headers = {"Authorization": f"Bearer {DATABRICKS_TOKEN}"}
+    try:
+        r = requests.get(url, headers=headers, timeout=30)
+        if r.status_code == 404:
+            return ""
+        if r.status_code == 403:
+            log.error(f"Volume 403 — check PAT: {volume_path}")
+            return ""
+        r.raise_for_status()
+        return r.text
+    except Exception as e:
+        log.warning(f"Volume fetch error ({volume_path}): {e}")
+        return ""
+
+
+def list_volume_files(dir_path: str) -> list:
+    url = f"{DATABRICKS_HOST}/api/2.0/fs/directories{dir_path}"
+    headers = {"Authorization": f"Bearer {DATABRICKS_TOKEN}"}
+    try:
+        r = requests.get(url, headers=headers, timeout=30)
+        r.raise_for_status()
+        return [e for e in r.json().get("contents", [])
+                if not e.get("is_directory", False)]
+    except Exception as e:
+        log.warning(f"Volume list error: {e}")
+        return []
+
+
+def run_sql(query: str, max_wait: int = 45) -> list | None:
+    url = f"{DATABRICKS_HOST}/api/2.0/sql/statements/"
+    headers = {"Authorization": f"Bearer {DATABRICKS_TOKEN}",
+               "Content-Type": "application/json"}
+    try:
+        r = requests.post(url, headers=headers, timeout=max_wait,
+                          json={"statement": query, "wait_timeout": "30s",
+                                "warehouse_id": SQL_WAREHOUSE_ID})
+        r.raise_for_status()
+        data = r.json()
+        sid    = data.get("statement_id")
+        status = data.get("status", {}).get("state", "")
+        polls  = 0
+        while status in ("PENDING", "RUNNING") and polls < 10:
+            time.sleep(3)
+            pr = requests.get(f"{url}{sid}", headers=headers, timeout=30)
+            pr.raise_for_status()
+            data   = pr.json()
+            status = data.get("status", {}).get("state", "")
+            polls += 1
+        if status != "SUCCEEDED":
+            log.error(f"SQL failed: {data.get('status',{}).get('error',{})}")
+            return None
+        cols = [c["name"] for c in
+                data.get("manifest", {}).get("schema", {}).get("columns", [])]
+        return [dict(zip(cols, row))
+                for row in data.get("result", {}).get("data_array", [])]
+    except Exception as e:
+        log.error(f"SQL error: {e}")
+        return None
+
+
+def get_practice_queue(target_date: str) -> dict | None:
+    rows = run_sql(
+        f"SELECT * FROM upsc_catalog.rag.daily_practice_queue "
+        f"WHERE ca_date = '{target_date}' LIMIT 1")
+    return rows[0] if rows else None
+
+
+def get_todays_ca() -> str:
+    today = date.today()
+    month = today.strftime("%m-%B")
+    local = (VAULT_PATH / "01_Current_Affairs" / str(today.year)
+             / month / f"CA_{today.isoformat()}.md")
+    if local.exists():
+        return local.read_text(encoding="utf-8")[:6000]
+    content = fetch_volume_file(
+        f"{VOLUME_BASE}/{today.isoformat()}/08_Phone_Summary.md")
+    if not content:
+        content = fetch_volume_file(
+            f"{VOLUME_BASE}/{today.isoformat()}/key_insights.md")
+    return content
+
+
+async def get_todays_ca_async() -> str:
+    return await asyncio.to_thread(get_todays_ca)
+
+
+async def fetch_volume_file_async(volume_path: str) -> str:
+    return await asyncio.to_thread(fetch_volume_file, volume_path)
+
+
+async def list_volume_files_async(dir_path: str) -> list:
+    return await asyncio.to_thread(list_volume_files, dir_path)
+
+
+async def get_practice_queue_async(target_date: str) -> dict | None:
+    return await asyncio.to_thread(get_practice_queue, target_date)
+
+
+# ================================================================
+# HELPERS
+# ================================================================
+
+def check_auth(update: Update) -> bool:
+    if not ALLOWED_USER_ID:
+        return True
+    return str(update.effective_user.id) == ALLOWED_USER_ID
+
+
+def sql_quote_literal(value: str) -> str:
+    """Safely quote SQL string literals for Databricks SQL statements."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _get_target_date(args) -> str:
+    if args:
+        d = " ".join(args).strip()
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", d):
+            return d
+    return date.today().isoformat()
+
+
+async def send_long(update: Update, text: str):
+    if not text:
+        text = "(empty)"
+    for i in range(0, len(text), 4000):
+        chunk = text[i:i + 4000]
+        for attempt in range(3):
+            try:
+                await update.message.reply_text(chunk)
+                break
+            except RetryAfter as e:
+                await asyncio.sleep(e.retry_after + 1)
+            except (TimedOut, NetworkError):
+                await asyncio.sleep(2 ** attempt)
+            except Exception as e:
+                log.error(f"send_long: {e}")
+                break
+
+
+async def thinking(update: Update, msg: str = "🧠 Hermes thinking..."):
+    await update.message.reply_text(msg)
+
+
+# ================================================================
+# SECTION 1 — CORE COMMANDS
+# ================================================================
+
+async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    await update.message.reply_text(
+        "🧠 HERMES — AIR-1 UPSC Mentor\n"
+        f"{DIVIDER_WIDE}\n"
+        "22 years. Produced AIR 1, 2, 5, 11.\n"
+        "Groq-powered. Free. Always on.\n\n"
+        "CORE STUDY:\n"
+        "  /teach /log /eod /daily /dump /stats /weak\n\n"
+        "PRELIMS:\n"
+        "  /quiz /trap /drill /pyq /csat /pattern /examiner\n\n"
+        "MAINS:\n"
+        "  /evaluate /model /essay /framework /structure\n\n"
+        "ACTIVE LEARNING:\n"
+        "  /socratic /feynman /why /visual /recall /simplify /progress\n\n"
+        "TELUGU OPTIONAL (500 marks):\n"
+        "  /telugu /tel_kavya /tel_prosody /tel_grammar\n"
+        "  /tel_modern /tel_eval /tel_pyq\n\n"
+        "BOOKS & SOURCES:\n"
+        "  /ncert /book /source\n\n"
+        "MOBILE PRACTICE:\n"
+        "  /practice /podcast /insights /phone /files /raw /snapshot\n\n"
+        "INTERVIEW:\n"
+        "  /daf /mock_iq\n\n"
+        "SYSTEM:\n"
+        "  /sync /compare /feedback /backup /cancel /help\n\n"
+        "Or just TYPE anything — Hermes responds directly.\n"
+        f"{DIVIDER_WIDE}\n"
+        "Start: /daily for today's CA or /teach <concept>"
+    )
+
+cmd_help = cmd_start
+
+
+async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    ctx.user_data.clear()
+    await update.message.reply_text("✅ Cleared. What next?")
+
+
+async def cmd_teach(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    concept = " ".join(ctx.args) if ctx.args else ""
+    if not concept:
+        await update.message.reply_text("Usage: /teach <concept>"); return
+    await thinking(update, f"📖 Teaching: {concept}...")
+    prompt = (
+        f"TEACH ME: {concept}\n\n"
+        "Use your full neuroscience framework:\n"
+        "1. HOOK — connect to my tech/data/Canada background\n"
+        "2. CORE FRAMEWORK — diagram or hierarchy first, then detail\n"
+        "3. CONSTITUTIONAL/STATUTORY BASIS — articles, acts, bodies\n"
+        "4. UPSC ANGLES:\n"
+        "   Prelims: key facts + common trap on this topic\n"
+        "   Mains: GS paper, likely question framing, ideal structure\n"
+        "5. STANDARD BOOK REFERENCE — which chapter of which book covers this best\n"
+        "6. MEMORY ANCHOR — one mnemonic or vivid image\n"
+        "End with: → Quick check: [one question]"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/teach", concept, resp, tok, lat)
+    log_concept(concept)
+    await send_long(update, resp)
+
+
+async def cmd_log(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    text = " ".join(ctx.args) if ctx.args else ""
+    if not text:
+        await update.message.reply_text("Usage: /log <what you studied/learned>"); return
+    today_str = date.today().isoformat()
+    if VAULT_PATH.exists():
+        fp = VAULT_PATH / "00_Dashboard" / f"Daily_Log_{today_str}.md"
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        now_t = datetime.now().strftime("%H:%M")
+        with open(fp, "a", encoding="utf-8") as f:
+            f.write(f"\n## {now_t}\n{text}\n")
+    _db_exec("INSERT INTO daily_logs(date,content,file_path) VALUES(?,?,?)",
+             (today_str, text, ""))
+    log_hermes("/log", text, "logged")
+    await update.message.reply_text(f"✅ Logged. Keep going.")
+
+
+async def cmd_eod(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    await thinking(update, "🌅 Hermes EOD review...")
+    weekly_hours = get_weekly_hours()
+    prompt = (
+        "END OF DAY REVIEW — be honest, not gentle.\n\n"
+        "1. WHAT WORKED TODAY — specific, not vague\n"
+        "2. WHAT DIDN'T — name it directly\n"
+        "3. RETENTION CHECK — pick the most important concept from today's log "
+        "and ask me one question on it right now\n"
+        "4. TOMORROW'S PRIORITY — one subject, one topic, specific reason why\n"
+        "5. PACE CHECK — am I on track for 1,820 hours by May 2027?\n"
+        f"   Estimate: {weekly_hours} this week. Is this enough?\n"
+        "6. INTENSITY VERDICT: Light / On-Track / Heavy"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/eod", "eod", resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_daily(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    await thinking(update, "📰 Fetching CA...")
+    ca = await get_todays_ca_async()
+    if ca:
+        prompt = (
+            f"Today is {date.today().isoformat()}. Here is today's CA:\n\n{ca[:5000]}\n\n"
+            "As Hermes, give me a study briefing. For EACH story:\n"
+            "1. HEADLINE + 2-line factual summary\n"
+            "2. GS PAPER + section (e.g. GS2 > Governance > RTI)\n"
+            "3. PRELIMS TRAP — exactly what UPSC might ask + what trips candidates\n"
+            "4. MAINS ANGLE — frame a 10-mark or 15-mark question from this\n"
+            "5. LINKAGE — connect to any other topic in syllabus\n\n"
+            "End with: TOP STORY TO MASTER TODAY and why."
+        )
+    else:
+        prompt = (
+            f"Today is {date.today().isoformat()}. No CA file found.\n"
+            "From your knowledge, give me the 3 most UPSC-critical current developments "
+            "in India this week across: Economy, Governance, Environment, IR.\n"
+            "For each: 2-line summary, GS paper, Prelims trap, Mains angle."
+        )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/daily", "daily-ca", resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_dump(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    text = " ".join(ctx.args) if ctx.args else ""
+    if len(text) < 50:
+        await update.message.reply_text("Usage: /dump <paste article text>"); return
+    await thinking(update, "🔍 Structuring for UPSC...")
+    prompt = (
+        f"STRUCTURE THIS FOR UPSC:\n\n{text[:6000]}\n\n"
+        "1. KEY FACTS (bullet — what UPSC would actually test)\n"
+        "2. GS PAPER MAP (which papers, which sections, why)\n"
+        "3. MAINS ANGLES (2-3 specific question framings)\n"
+        "4. PRELIMS TRAPS (what's dangerous here)\n"
+        "5. LINKAGES (connect to 2-3 other syllabus topics)\n"
+        "6. STANDARD BOOK CONTEXT (does any standard book cover this?)"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/dump", text[:200], resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    total   = (_db_fetchone("SELECT COUNT(*) FROM interactions") or (0,))[0]
+    today_n = (_db_fetchone("SELECT COUNT(*) FROM interactions WHERE date(timestamp)=date('now')") or (0,))[0]
+    qt, qa  = _db_fetchone("SELECT COUNT(*),COALESCE(AVG(CASE WHEN was_correct=1 THEN 100.0 ELSE 0.0 END),0) FROM quiz_history") or (0, 0)
+    wk      = (_db_fetchone("SELECT COUNT(*) FROM weak_topics") or (0,))[0]
+    ct      = (_db_fetchone("SELECT COUNT(*) FROM concepts_taught") or (0,))[0]
+    ld      = (_db_fetchone("SELECT COUNT(DISTINCT date) FROM daily_logs") or (0,))[0]
+    traps   = (_db_fetchone("SELECT COUNT(*) FROM prelims_traps") or (0,))[0]
+    flaws   = (_db_fetchone("SELECT COUNT(*) FROM mains_flaws") or (0,))[0]
+    active  = (_db_fetchone("SELECT COUNT(DISTINCT date(timestamp)) FROM interactions WHERE timestamp>=date('now','-30 days')") or (0,))[0]
+    h_tok   = (_db_fetchone("SELECT COALESCE(SUM(tokens_used),0) FROM hermes_interactions WHERE timestamp>=date('now','-7 days')") or (0,))[0]
+    h_lat   = (_db_fetchone("SELECT COALESCE(AVG(latency_ms),0) FROM hermes_interactions WHERE latency_ms>0") or (0,))[0]
+    await update.message.reply_text(
+        f"📊 HERMES Stats\n{DIVIDER}\n"
+        f"Interactions: {total} total | {today_n} today\n"
+        f"Concepts taught: {ct} | Quizzes: {qt} | Accuracy: {qa:.0f}%\n"
+        f"Weak topics: {wk} | Traps logged: {traps} | Mains flaws: {flaws}\n"
+        f"Days logged: {ld} | Active 30d: {active}/30\n"
+        f"{DIVIDER}\n"
+        f"Groq this week: {h_tok:,} tokens | Avg latency: {h_lat:.0f}ms\n"
+        f"Est. cost: $0.00 (free tier)"
+    )
+
+
+async def cmd_weak(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    topics = _db_fetch(
+        "SELECT subject,topic,miss_count,last_reviewed "
+        "FROM weak_topics ORDER BY miss_count DESC LIMIT 10")
+    if not topics:
+        await update.message.reply_text("No weak topics yet. Use /quiz!"); return
+    topic_list = "\n".join(f"  [{s}] {t} — missed {m}x" for s,t,m,_ in topics)
+    prompt = (
+        f"My weakest topics:\n{topic_list}\n\n"
+        "As Hermes:\n"
+        "1. Which ONE do I tackle today? (give clear reason)\n"
+        "2. Exact 20-minute revision plan for it\n"
+        "3. One Prelims Q and one Mains Q from this topic\n"
+        "4. Root cause: WHY am I repeatedly missing this?"
+    )
+    await thinking(update, "⚠️ Hermes analyzing weak topics...")
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/weak", "weak-analysis", resp, tok, lat)
+    raw = f"⚠️ Weak Topics\n{DIVIDER}\n{topic_list}"
+    await send_long(update, raw)
+    await send_long(update, f"🧠 Hermes Study Plan:\n\n{resp}")
+
+
+# ================================================================
+# SECTION 2 — PRELIMS
+# ================================================================
+
+async def cmd_quiz(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    subject = " ".join(ctx.args) if ctx.args else ""
+    prompt = (
+        f"Give me 1 UPSC Prelims MCQ on: {subject}.\n"
+        if subject else
+        "Give me 1 UPSC Prelims MCQ on my weakest topic right now.\n"
+    )
+    prompt += (
+        "\nFormat exactly:\n"
+        "Q: [question — full sentence]\n"
+        "(A) ... (B) ... (C) ... (D) ...\n\n"
+        "Design rule: include one subtle trap — a statement that's 95% true but has "
+        "one critical flaw. This is how real UPSC Prelims works.\n"
+        "Do NOT reveal answer. Wait for my response."
+    )
+    await thinking(update, "🎯 Generating Prelims MCQ...")
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/quiz", subject or "auto", resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_trap(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    text = " ".join(ctx.args) if ctx.args else ""
+    if not text:
+        await update.message.reply_text(
+            "Usage: /trap <paste the question you got wrong + which option you chose>"); return
+    await thinking(update, "🔬 Options Autopsy...")
+    prompt = (
+        f"OPTIONS AUTOPSY on this question I got wrong:\n\n{text}\n\n"
+        "1. EXACT TRAP — name the specific distractor technique used\n"
+        "2. PSYCHOLOGICAL BIAS — why human brain picks the wrong option\n"
+        "3. CORRECT REASONING — step-by-step logic to right answer\n"
+        "4. THE RULE — one line I must memorise to never miss this type again\n"
+        "5. SIMILAR PYQs — name 1-2 past year questions with same trap pattern\n"
+        "Under 250 words. Dense, not padded."
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    _db_exec("INSERT INTO prelims_traps(topic,trap_type,trap_description) VALUES(?,?,?)",
+             ("General", "autopsy", str(resp)[:300]))
+    log_hermes("/trap", text[:200], resp, tok, lat)
+    await send_long(update, resp)
+    await update.message.reply_text("🚨 Trap logged to memory.")
+
+
+async def cmd_drill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    await thinking(update, "🌪️ Interleaved Drill...")
+    prompt = (
+        "INTERLEAVED DRILL — mix 3 questions from 3 different subjects from my weak list.\n"
+        "Make them rapid-fire. Each from a different GS area.\n"
+        "Include one from Telugu Optional.\n"
+        "Do NOT reveal answers. Number them 1, 2, 3.\n"
+        "After I answer all three, grade each and explain."
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/drill", "interleaved", resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_pyq(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """PYQ pattern analysis — examiner mindset."""
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else ""
+    if not topic:
+        await update.message.reply_text(
+            "Usage: /pyq <topic>\nExample: /pyq federalism\nExample: /pyq environment Prelims"); return
+    await thinking(update, f"📜 PYQ Pattern for: {topic}...")
+    prompt = (
+        f"PYQ ANALYSIS: {topic}\n\n"
+        "As a 22-year UPSC expert who has memorised every PYQ:\n"
+        "1. FREQUENCY — how many times has this appeared? (Prelims vs Mains)\n"
+        "2. YEAR-WISE PATTERN — list actual years and what aspect was tested\n"
+        "3. QUESTION EVOLUTION — how has the framing changed over decades?\n"
+        "4. EXAMINER'S FAVOURITE ANGLE — what specific aspect do they love to test?\n"
+        "5. PREDICTION — based on pattern, what's likely in 2025-2027?\n"
+        "6. GAPS — what aspect of this topic has NEVER been asked but should be?\n\n"
+        "Be specific. Year + paper + actual question theme where possible."
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/pyq", topic, resp, tok, lat)
+    log_concept(f"PYQ:{topic}")
+    await send_long(update, resp)
+
+
+async def cmd_csat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """CSAT practice with strategy."""
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else "mixed"
+    await thinking(update, "📐 CSAT Practice...")
+    prompt = (
+        f"CSAT PRACTICE — topic: {topic}\n\n"
+        "Give me 3 CSAT questions:\n"
+        "  1. Reading comprehension (short passage + 2 questions)\n"
+        "  2. Logical reasoning / analytical (clear, no ambiguity)\n"
+        "  3. Basic numeracy (keep calculation under 60 seconds)\n\n"
+        "After each question, include:\n"
+        "STRATEGY TIP: how to eliminate wrong options quickly.\n"
+        "TIME TARGET: how many seconds to spend on this type.\n\n"
+        "Do NOT reveal answers yet."
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/csat", topic, resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_pattern(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Identify question patterns across years for a subject."""
+    if not check_auth(update): return
+    subject = " ".join(ctx.args) if ctx.args else ""
+    if not subject:
+        await update.message.reply_text(
+            "Usage: /pattern <subject>\nExamples: /pattern Polity  /pattern Economy  /pattern Environment"); return
+    await thinking(update, f"🔍 Pattern analysis: {subject}...")
+    prompt = (
+        f"PRELIMS PATTERN ANALYSIS: {subject}\n\n"
+        "Analyse the last 10 years of UPSC Prelims for this subject:\n"
+        "1. TOPIC DISTRIBUTION — which subtopics get maximum questions?\n"
+        "2. YEARLY TREND — is frequency increasing, decreasing, stable?\n"
+        "3. QUESTION TYPES — factual vs conceptual vs application ratio?\n"
+        "4. DISTRACTOR PATTERNS — what traps does UPSC repeatedly use here?\n"
+        "5. HIGH-YIELD ZONES — top 5 subtopics to master for max ROI\n"
+        "6. NEGLECTED ZONES — subtopics in syllabus that rarely appear\n"
+        "7. 2027 PREDICTION — what should I focus on given current trends?\n\n"
+        "Give actual numbers and years where possible."
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/pattern", subject, resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_examiner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Think like the examiner — deconstruct any question."""
+    if not check_auth(update): return
+    question = " ".join(ctx.args) if ctx.args else ""
+    if not question:
+        await update.message.reply_text(
+            "Usage: /examiner <paste any UPSC question>\n"
+            "Hermes deconstructs it from the examiner's perspective."); return
+    await thinking(update, "🧐 Examiner mindset...")
+    prompt = (
+        f"EXAMINER DECONSTRUCTION:\n\n\"{question}\"\n\n"
+        "Step into the mind of the UPSC examiner who designed this question:\n"
+        "1. WHY THIS QUESTION — what gap in understanding is being tested?\n"
+        "2. INTENDED WRONG ANSWER — which option is the trap and why?\n"
+        "3. DISCRIMINATOR — what separates top 1% from top 10% here?\n"
+        "4. CORRECT ANSWER + REASONING — full logical path\n"
+        "5. STANDARD BOOK SOURCE — where exactly is this answer?\n"
+        "6. SIMILAR QUESTIONS TO PRACTISE — 2 questions with same design"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/examiner", question[:200], resp, tok, lat)
+    await send_long(update, resp)
+
+
+# ================================================================
+# SECTION 3 — MAINS
+# ================================================================
+
+async def cmd_evaluate(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    text = " ".join(ctx.args) if ctx.args else ""
+    if len(text) < 50:
+        await update.message.reply_text("Usage: /evaluate <paste your Mains answer>"); return
+    await thinking(update, "📝 Hermes grading...")
+    prompt = (
+        f"EVALUATE THIS MAINS ANSWER — be a strict UPSC examiner:\n\n{text[:5000]}\n\n"
+        "1. SCORE X/10 — be honest. Average is 5.5. Good is 7+. Excellent is 8.5+.\n"
+        "2. STRUCTURE AUDIT — intro/body/conclusion: tight or loose?\n"
+        "3. CONTENT GAPS — missing: articles? judgments? schemes? data? examples?\n"
+        "4. GS LINKAGES — what other GS areas could have been woven in?\n"
+        "5. TOP 3 FLAWS — state them bluntly. Check if I'm repeating known flaws.\n"
+        "6. TOPPER DIFFERENCE — what would an AIR-5 answer have that mine doesn't?\n"
+        "7. MODEL INTRO — rewrite my introduction in 3 sentences the way a topper would.\n\n"
+        "Do not soften. A 6/10 with sharp feedback is worth more than 8/10 with vague praise."
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    score = extract_score(resp)
+    topic = (" ".join(text.split()[:4]))
+    if score:
+        _db_exec(
+            "INSERT INTO evaluation_history(topic,answer_snippet,score) VALUES(?,?,?)",
+            (topic, text[:100], score))
+        if score < 6.0:
+            log_weakness("Mains", topic, "evaluate")
+    log_hermes("/evaluate", text[:200], resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else ""
+    if not topic:
+        await update.message.reply_text("Usage: /model <topic>"); return
+    await thinking(update, f"🔨 Building mental model: {topic}...")
+    prompt = (
+        f"MENTAL MODEL: {topic}\n\n"
+        "1. CORE PRINCIPLE — one sentence that explains everything\n"
+        "2. MECHANISM — how it actually works (5 steps max, use flowchart if helpful)\n"
+        "3. CONSTITUTIONAL/LEGAL BASIS — articles, acts, rules\n"
+        "4. EXCEPTIONS AND EDGE CASES — where the model breaks\n"
+        "5. EXAMPLES:\n"
+        "   Historical (pre-2000): 1 case\n"
+        "   Recent (post-2015): 1 case\n"
+        "   Comparative (another country): 1 case\n"
+        "6. GS MAP — Prelims + Mains + Essay angle\n"
+        "7. 90-SECOND ANSWER SKELETON — if this appears in Mains, what's my structure?"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/model", topic, resp, tok, lat)
+    log_concept(topic)
+    await send_long(update, resp)
+
+
+async def cmd_essay(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Essay writing — the most neglected part of UPSC."""
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else ""
+    if not topic:
+        await update.message.reply_text(
+            "Usage: /essay <topic>\n"
+            "Example: /essay 'Technology is the new religion'\n"
+            "Example: /essay evaluate <paste your essay draft>"); return
+
+    # If user pastes a draft (long text), evaluate it
+    if len(topic) > 200:
+        await thinking(update, "📜 Evaluating essay draft...")
+        prompt = (
+            f"EVALUATE THIS UPSC ESSAY:\n\n{topic[:8000]}\n\n"
+            "1. THEME COHERENCE — is there one clear thread? Score /10\n"
+            "2. INTRODUCTION — does it set the philosophical context? Score /10\n"
+            "3. STRUCTURE — logical flow, transitions, balance? Score /10\n"
+            "4. CONTENT DEPTH — examples, data, multidimensional? Score /10\n"
+            "5. CONCLUSION — does it land powerfully? Score /10\n"
+            "6. OVERALL /10\n"
+            "7. THE ONE THING that would most improve this essay\n"
+            "8. REWRITE the introduction paragraph the way a topper would."
+        )
+    else:
+        await thinking(update, f"📜 Essay framework: {topic}...")
+        prompt = (
+            f"ESSAY FRAMEWORK: '{topic}'\n\n"
+            "As a 22-year UPSC essay specialist:\n"
+            "1. THEME IDENTIFICATION — what is this essay REALLY about? (1 sentence)\n"
+            "2. PHILOSOPHICAL HOOK — what quote or idea opens powerfully?\n"
+            "3. STRUCTURE (1800 words target):\n"
+            "   INTRO (200w): hook → context → thesis\n"
+            "   BODY 1 (400w): [aspect 1 + example + analysis]\n"
+            "   BODY 2 (400w): [aspect 2 + example + analysis]\n"
+            "   BODY 3 (400w): [counterargument + rebuttal]\n"
+            "   BODY 4 (200w): [way forward / solution]\n"
+            "   CONCLUSION (200w): [synthesis + vision]\n"
+            "4. TOP 5 EXAMPLES to use — specific, dateable, diverse\n"
+            "5. VOCABULARY — 5 power phrases for this theme\n"
+            "6. TRAPS — what do mediocre candidates write that examiners hate?\n"
+            "7. AIR-1 DIFFERENTIATOR — what makes the topper essay on this topic unforgettable?"
+        )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/essay", topic[:200], resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_framework(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Quick answer frameworks for common Mains question types."""
+    if not check_auth(update): return
+    qtype = " ".join(ctx.args) if ctx.args else ""
+    if not qtype:
+        await update.message.reply_text(
+            "Usage: /framework <question type or topic>\n"
+            "Examples:\n"
+            "  /framework critically examine\n"
+            "  /framework discuss implications\n"
+            "  /framework governance reforms\n"
+            "  /framework environment vs development"); return
+    await thinking(update, f"⚙️ Framework for: {qtype}...")
+    prompt = (
+        f"MAINS ANSWER FRAMEWORK: '{qtype}'\n\n"
+        "1. QUESTION TYPE DECODE — what exactly is this asking?\n"
+        "2. INSTANT STRUCTURE — 5-point skeleton I can use in 2 minutes\n"
+        "3. OPENING LINE FORMULA — how to start without wasting 30 seconds\n"
+        "4. MANDATORY ELEMENTS — what an examiner ALWAYS expects here\n"
+        "5. COMMON MISTAKES — what average candidates write\n"
+        "6. SAMPLE ANSWER SKELETON — fill in the blanks style, 150 words\n"
+        "7. TIME ALLOCATION — how to split 7-8 minutes across sections"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/framework", qtype, resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_structure(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Paste a question, get a full answer structure back."""
+    if not check_auth(update): return
+    question = " ".join(ctx.args) if ctx.args else ""
+    if not question:
+        await update.message.reply_text(
+            "Usage: /structure <paste any Mains question>\n"
+            "Hermes gives you a ready-to-write answer structure."); return
+    await thinking(update, "📋 Structuring answer...")
+    prompt = (
+        f"ANSWER STRUCTURE for:\n\"{question}\"\n\n"
+        "Give me a ready-to-write answer plan:\n"
+        "1. WORD LIMIT STRATEGY — 150 or 250 words? How to split?\n"
+        "2. INTRODUCTION (2-3 lines) — exact approach\n"
+        "3. BODY POINTS (numbered) — exactly what each paragraph covers\n"
+        "4. MUST-INCLUDE — specific articles / data / schemes / judgments\n"
+        "5. CONCLUSION (2 lines) — way forward or balanced statement\n"
+        "6. DIAGRAM/TABLE? — would a flowchart or table add marks here?\n"
+        "7. TIME: X minutes — how to use them\n\n"
+        "Be specific. No vague advice."
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/structure", question[:200], resp, tok, lat)
+    await send_long(update, resp)
+
+
+# ================================================================
+# SECTION 4 — ACTIVE LEARNING
+# ================================================================
+
+async def cmd_socratic(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else ""
+    if not topic:
+        await update.message.reply_text("Usage: /socratic <topic>"); return
+    await thinking(update, f"🤔 Socratic session: {topic}...")
+    prompt = (
+        f"SOCRATIC SESSION: {topic}\n\n"
+        "You are Socrates with 22 years of UPSC experience.\n"
+        "Ask ONE question. Reveal nothing.\n"
+        "The question should expose whether I understand the FOUNDATION, "
+        "not the surface facts.\n"
+        "If I answer well, go one level deeper.\n"
+        "If I answer poorly, ask the same concept differently.\n"
+        "Goal: make me BUILD the answer from first principles."
+    )
+    _db_exec("INSERT INTO socratic_sessions(topic) VALUES(?)", (topic,))
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/socratic", topic, resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_feynman(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    text = " ".join(ctx.args) if ctx.args else ""
+    if ":" not in text:
+        await update.message.reply_text("Usage: /feynman <topic>: <your explanation>"); return
+    topic, explanation = text.split(":", 1)
+    await thinking(update, f"🔬 Feynman audit: {topic.strip()}...")
+    prompt = (
+        f"FEYNMAN AUDIT\n"
+        f"Topic: {topic.strip()}\n"
+        f"My explanation: {explanation.strip()}\n\n"
+        "1. ACCURACY — what's correct in my explanation?\n"
+        "2. ERRORS — what's wrong or misleading? Be specific.\n"
+        "3. GAPS — what important aspect did I miss entirely?\n"
+        "4. DEPTH — is this exam-level or surface level?\n"
+        "5. SCORE X/10\n"
+        "6. THE CORRECT EXPLANATION — rewrite it in 5 sentences the way I should say it in Mains\n"
+        "7. MEMORY ANCHOR — one way to never forget this again"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/feynman", text[:200], resp, tok, lat)
+    log_concept(topic.strip())
+    await send_long(update, resp)
+
+
+async def cmd_why(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    fact = " ".join(ctx.args) if ctx.args else ""
+    if not fact:
+        await update.message.reply_text("Usage: /why <state a fact>"); return
+    await thinking(update, f"🔥 WHY interrogation...")
+    prompt = (
+        f"WHY-HOW INTERROGATION\nGad states: \"{fact}\"\n\n"
+        "Don't explain. Ask ONE sharp 'Why?' that reveals whether he truly understands.\n"
+        "Not a surface why — a foundational why.\n"
+        "After he answers:\n"
+        "  If correct → go one level deeper with another Why\n"
+        "  If wrong → correct precisely, then ask again\n"
+        "Keep going until we hit bedrock understanding.\n"
+        "Maximum 4 levels deep."
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/why", fact, resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_visual(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else ""
+    if not topic:
+        await update.message.reply_text("Usage: /visual <topic>"); return
+    await thinking(update, f"🎨 Dual-coding: {topic}...")
+    prompt = (
+        f"DUAL-CODING for: {topic}\n\n"
+        "For each key concept:\n"
+        "  WORDS: 2-3 sentence precise definition\n"
+        "  VISUAL: ASCII diagram, flowchart, or comparison table\n\n"
+        "Then:\n"
+        "HIERARCHY MAP — show relationships between sub-concepts using indentation\n"
+        "TIMELINE (if applicable) — key dates in chronological structure\n"
+        "MEMORY TRICK — one vivid image that encodes the whole concept\n"
+        "2 EXAM QUESTIONS — one Prelims, one Mains"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/visual", topic, resp, tok, lat)
+    log_concept(topic)
+    await send_long(update, resp)
+
+
+async def cmd_recall(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else ""
+    if not topic:
+        await update.message.reply_text("Usage: /recall <topic>"); return
+    await thinking(update, f"💡 Active Recall: {topic}...")
+    prompt = (
+        f"ACTIVE RECALL: {topic}\n\n"
+        "Do NOT teach. Make Gad produce.\n\n"
+        "Step 1: Ask him to write everything he knows about {topic} in 3 sentences.\n"
+        "        Tell him: 'Don't look anything up. Write from memory.'\n\n"
+        "After he responds, grade:\n"
+        "  What he got right (specific)\n"
+        "  What he missed (specific)\n"
+        "  Confidence vs accuracy gap (very important)\n"
+        "  Score: X/10\n"
+        "Then ask one follow-up to close the biggest gap."
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/recall", topic, resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_simplify(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else ""
+    if not topic:
+        await update.message.reply_text("Usage: /simplify <topic>"); return
+    await thinking(update, f"🧒 Simplifying: {topic}...")
+    prompt = (
+        f"SIMPLIFY: {topic}\n\n"
+        "4 layers — each builds on the previous:\n"
+        "LAYER 1 — ELI-12: explain as if to a smart 12-year-old. No jargon.\n"
+        "LAYER 2 — ELI-GRAD: explain to a well-educated adult. Some technical terms ok.\n"
+        "LAYER 3 — ELI-UPSC: explain at Mains answer quality. All technical aspects.\n"
+        "LAYER 4 — ELI-TOPPER: add the nuance, exceptions, and linkages that "
+        "separate AIR 1-50 from AIR 200-500.\n\n"
+        "Keep each layer DISTINCT. Don't just add words — add a new dimension each time."
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/simplify", topic, resp, tok, lat)
+    log_concept(topic)
+    await send_long(update, resp)
+
+
+async def cmd_progress(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else ""
+    if not topic:
+        await update.message.reply_text("Usage: /progress <topic>"); return
+    await thinking(update, f"📈 Progressive Recall: {topic}...")
+    prompt = (
+        f"PROGRESSIVE RECALL: {topic}\n\n"
+        "DO NOT give answers. Test from bottom up.\n\n"
+        "LEVEL 1 — RECALL: 'List 3 basic facts about {topic}.'\n"
+        "LEVEL 2 — UNDERSTAND: 'Explain WHY this matters.'\n"
+        "LEVEL 3 — APPLY: 'Give a real example where this principle worked/failed.'\n"
+        "LEVEL 4 — ANALYSE: 'Compare this to [related concept].'\n"
+        "LEVEL 5 — EVALUATE: 'Critically examine this from 3 different perspectives.'\n\n"
+        "Start ONLY with Level 1. Move up when I get it right. Stay if I'm wrong.\n"
+        "Tell me which level we're at each time."
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/progress", topic, resp, tok, lat)
+    await send_long(update, resp)
+
+
+# ================================================================
+# SECTION 5 — TELUGU OPTIONAL (500 marks — treated seriously)
+# ================================================================
+
+async def cmd_telugu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Daily Telugu Optional — reads Volume file first, then Hermes analysis."""
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else ""
+    await thinking(update, "📚 Telugu Optional...")
+    today = date.today().isoformat()
+    content = await fetch_volume_file_async(f"{VOLUME_BASE}/{today}/06_Telugu_Optional.md")
+    if content:
+        prompt = (
+            f"Today's Telugu Optional content:\n{content[:4000]}\n\n"
+            "1. CORE LITERARY CONCEPT — explain in simple Telugu + English\n"
+            "2. PAPER MAPPING — Paper VI or VII? Which section?\n"
+            "3. EXAM QUESTIONS — 2 likely questions from this passage\n"
+            "4. TEXTUAL EVIDENCE — key quotes or references to memorise\n"
+            "5. MEMORY HOOK — one vivid way to remember this\n"
+            "→ Quick check: [one question on this passage]"
+        )
+    elif topic:
+        prompt = (
+            f"TELUGU OPTIONAL: {topic}\n\n"
+            "Paper VI/VII — treat with full GS rigor:\n"
+            "1. LITERARY/LINGUISTIC CONCEPT — precise definition with Sanskrit roots\n"
+            "2. HISTORICAL CONTEXT — period, tradition, major works\n"
+            "3. KEY AUTHORS & TEXTS — who, when, what contribution\n"
+            "4. PAPER SECTION MAPPING — exact syllabus location\n"
+            "5. PYQ PATTERN — has this been asked before? When?\n"
+            "6. MODEL ANSWER SKELETON — how to structure if this appears\n"
+            "7. MEMORY TECHNIQUE — mnemonic or story\n"
+            "→ Quick check: [one question]"
+        )
+    else:
+        prompt = (
+            f"Today is {today}. Give me today's Telugu Optional focus.\n\n"
+            "Pick the highest-yield topic from my weak list or syllabus gaps.\n"
+            "Give a focused 15-minute revision capsule:\n"
+            "  Topic name + Paper/Section\n"
+            "  Core concept (5 lines)\n"
+            "  3 key points to memorise\n"
+            "  1 likely exam question\n"
+            "  1 memory hook"
+        )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/telugu", topic or today, resp, tok, lat)
+    log_concept(f"Telugu:{topic or 'daily'}")
+    await send_long(update, resp)
+
+
+async def cmd_tel_kavya(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Kavitrayam — Nannaya, Tikkana, Errana deep dive."""
+    if not check_auth(update): return
+    focus = " ".join(ctx.args) if ctx.args else ""
+    await thinking(update, "📖 Kavitrayam...")
+    prompt = (
+        f"KAVITRAYAM DEEP DIVE{' — ' + focus if focus else ''}\n\n"
+        "The three pillars of Telugu literature: Nannaya, Tikkana, Errana.\n\n"
+        "Cover:\n"
+        "1. NANNAYA — Adi Kavi, Andhra Mahabharatamu, his unique contributions, "
+        "Gramya vs. Sahitya debate, chandas used\n"
+        "2. TIKKANA — Style contrast with Nannaya, Nirvachana Uttara Ramayanamu, "
+        "Sabha Parva contribution, philosophical depth\n"
+        "3. ERRANA — Completion of Mahabharatamu, Ramayanamu, his critical reception\n"
+        "4. COMPARATIVE TABLE — style, period, works, unique feature each\n"
+        "5. PYQ PATTERN — which aspects are examined most?\n"
+        "6. MODEL ANSWER — if asked 'Compare the three poets of Kavitrayam' (400 words)\n"
+        f"{'Focus specifically on: ' + focus if focus else ''}\n"
+        "→ Quick check: [one question]"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/tel_kavya", focus or "general", resp, tok, lat)
+    log_concept("Kavitrayam")
+    await send_long(update, resp)
+
+
+async def cmd_tel_prosody(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Telugu Prosody (Chandas) — Vrittalu, Padyalu, metres."""
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else ""
+    await thinking(update, "🎵 Telugu Prosody...")
+    prompt = (
+        f"TELUGU PROSODY (CHANDAS){' — ' + topic if topic else ''}\n\n"
+        "1. METRE SYSTEM — Aksara Gana, Matra Gana, Laghu-Guru basics\n"
+        "2. MAJOR METRES — Uttara Ramachandra Vrittam, Champakamala, Sisa Vrittam: "
+        "structure + example line from actual text\n"
+        "3. PADYA TYPES — Shatpadi, Sangatya, Dwipada: definition + example\n"
+        "4. SANGAM INFLUENCE vs SANSKRIT INFLUENCE — how Telugu prosody evolved\n"
+        "5. EXAM ANGLE — typically Paper VI or VII? What exact questions appear?\n"
+        "6. IDENTIFICATION EXERCISE — give me one padya and ask me to identify the metre\n"
+        "→ Quick check: [identification question]"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/tel_prosody", topic or "general", resp, tok, lat)
+    log_concept("Telugu Prosody")
+    await send_long(update, resp)
+
+
+async def cmd_tel_grammar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Telugu Grammar (Vyakarana) — Bala Vyakaranamu etc."""
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else ""
+    await thinking(update, "📝 Telugu Grammar...")
+    prompt = (
+        f"TELUGU GRAMMAR (VYAKARANA){' — ' + topic if topic else ''}\n\n"
+        "1. MAJOR GRAMMARS — Nannaya's grammar, Bala Vyakaranamu, Andhra Shabda Chintamani: "
+        "author, period, contribution\n"
+        "2. SANDHI RULES — with Telugu examples (not just theory)\n"
+        "3. SAMASA TYPES — Dwandwa, Tatpurusha, Bahuvrihi in Telugu with examples\n"
+        "4. VIBHAKTI SYSTEM — case endings, comparison with Sanskrit\n"
+        "5. DIALECT vs STANDARD — Gramya bhasha vs Grandhika bhasha debate\n"
+        "6. EXAM QUESTIONS — typical grammar questions in Paper VII\n"
+        "7. PRACTICE — give me one sandhi/samasa to identify\n"
+        "→ Quick check: [grammar identification]"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/tel_grammar", topic or "general", resp, tok, lat)
+    log_concept("Telugu Grammar")
+    await send_long(update, resp)
+
+
+async def cmd_tel_modern(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Modern Telugu Literature + Western Critical Theory."""
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else ""
+    await thinking(update, "🖊️ Modern Telugu + Critical Theory...")
+    prompt = (
+        f"MODERN TELUGU LITERATURE & WESTERN CRITICAL APPROACHES"
+        f"{' — ' + topic if topic else ''}\n\n"
+        "PART A — MODERN TELUGU:\n"
+        "1. REFORMATION ERA — Kandukuri Veeresalingam, Gurajada Apparao: their revolt against tradition\n"
+        "2. VIRASAM / DIGAMBARA KAVITVA — revolutionary poetry movement: key poets, themes\n"
+        "3. FEMINIST VOICES — major women writers and their contribution\n"
+        "4. SHORT STORY TRADITION — Chalam, Sripada Subrahmanya Sastry: style + themes\n\n"
+        "PART B — WESTERN CRITICAL APPROACHES:\n"
+        "5. NEW CRITICISM — close reading, intentional fallacy, affective fallacy\n"
+        "6. STRUCTURALISM — Saussure's signifier/signified applied to Telugu texts\n"
+        "7. POST-COLONIALISM — applying to Telugu literature's British-era transformation\n"
+        "8. PAPER MAPPING — which theory is tested more in Paper VII?\n"
+        "→ Quick check: [one theory application question]"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/tel_modern", topic or "general", resp, tok, lat)
+    log_concept("Modern Telugu Literature")
+    await send_long(update, resp)
+
+
+async def cmd_tel_eval(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Evaluate a Telugu Optional answer."""
+    if not check_auth(update): return
+    text = " ".join(ctx.args) if ctx.args else ""
+    if len(text) < 30:
+        await update.message.reply_text(
+            "Usage: /tel_eval <paste your Telugu Optional answer>"); return
+    await thinking(update, "📊 Evaluating Telugu answer...")
+    prompt = (
+        f"EVALUATE THIS TELUGU OPTIONAL ANSWER:\n\n{text[:4000]}\n\n"
+        "Evaluate as a Telugu literature examiner:\n"
+        "1. SCORE X/10\n"
+        "2. TEXTUAL ACCURACY — are facts, dates, author names correct?\n"
+        "3. CRITICAL DEPTH — does the answer show understanding beyond surface?\n"
+        "4. LITERARY TERMINOLOGY — correct use of chandas, alankara, rasa terms?\n"
+        "5. COMPARATIVE ANALYSIS — did it compare adequately (if required)?\n"
+        "6. LANGUAGE QUALITY — Telugu/English mix appropriate?\n"
+        "7. TOPPER DIFFERENCE — what would an AIR-5 Telugu Optional answer include?\n"
+        "8. REWRITE the weakest paragraph correctly."
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    score = extract_score(resp)
+    if score:
+        _db_exec(
+            "INSERT INTO evaluation_history(topic,answer_snippet,score) VALUES(?,?,?)",
+            ("Telugu Optional", text[:100], score))
+    log_hermes("/tel_eval", text[:200], resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_tel_pyq(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Telugu Optional PYQ pattern analysis."""
+    if not check_auth(update): return
+    paper = " ".join(ctx.args) if ctx.args else ""
+    await thinking(update, "📜 Telugu Optional PYQ analysis...")
+    prompt = (
+        f"TELUGU OPTIONAL PYQ ANALYSIS{' — ' + paper if paper else ' (both papers)'}\n\n"
+        "As someone who has analysed 20 years of Telugu Optional papers:\n"
+        "1. PAPER VI PATTERN — which topics repeat? Frequency?\n"
+        "2. PAPER VII PATTERN — grammar vs literature ratio? Trend?\n"
+        "3. HIGH-YIELD TOPICS — what 20% of syllabus gives 80% of marks?\n"
+        "4. QUESTION DESIGN — essay type vs short answer ratio?\n"
+        "5. YEAR-WISE SHIFT — has the paper become easier/harder/more theoretical?\n"
+        "6. SAFE BETS FOR 2027 — topics almost certain to appear based on gap analysis\n"
+        "7. PREPARATION PRIORITY for Gad — given his background, what to master first?"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/tel_pyq", paper or "both", resp, tok, lat)
+    await send_long(update, resp)
+
+
+# ================================================================
+# SECTION 6 — BOOKS & SOURCES
+# ================================================================
+
+async def cmd_ncert(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """NCERT-level grounding for any topic."""
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else ""
+    if not topic:
+        await update.message.reply_text(
+            "Usage: /ncert <topic>\nExample: /ncert federalism\nExample: /ncert cell biology"); return
+    await thinking(update, f"📗 NCERT foundation: {topic}...")
+    prompt = (
+        f"NCERT FOUNDATION: {topic}\n\n"
+        "1. WHICH NCERT — exact book (class + subject + chapter) covering this\n"
+        "2. CORE CONCEPT as NCERT explains it — simple, precise\n"
+        "3. KEY DIAGRAMS/MAPS from NCERT if applicable\n"
+        "4. BEYOND NCERT — what NCERT misses that UPSC actually tests\n"
+        "5. NCERT → UPSC BRIDGE — how this NCERT concept connects to actual PYQs\n"
+        "6. SUPPLEMENTARY SOURCE — which standard book to read AFTER NCERT for this\n"
+        "→ Quick check: [NCERT-level question]"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/ncert", topic, resp, tok, lat)
+    log_concept(f"NCERT:{topic}")
+    await send_long(update, resp)
+
+
+async def cmd_book(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Standard book guidance — what to read, how much, which edition."""
+    if not check_auth(update): return
+    query = " ".join(ctx.args) if ctx.args else ""
+    if not query:
+        await update.message.reply_text(
+            "Usage: /book <topic or book name>\n"
+            "Examples:\n"
+            "  /book polity\n"
+            "  /book Laxmikanth which chapters\n"
+            "  /book economy standard books\n"
+            "  /book environment best source"); return
+    await thinking(update, f"📚 Book guidance: {query}...")
+    prompt = (
+        f"STANDARD BOOK GUIDANCE: {query}\n\n"
+        "As Hermes with 22 years of UPSC coaching:\n"
+        "1. RECOMMENDED BOOKS — title, author, edition (be specific)\n"
+        "2. HOW MUCH TO READ — full book? Specific chapters? First reading vs revision?\n"
+        "3. READING STRATEGY — what to annotate, what to skim, what to skip\n"
+        "4. EDITION TRAP — is the latest edition always better? Any specific edition recommended?\n"
+        "5. TIME INVESTMENT — realistic hours to complete this source\n"
+        "6. INTEGRATION — how does this source connect with other books?\n"
+        "7. FOR GAD SPECIFICALLY — given his 1,820 hours, how to prioritise this source"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/book", query, resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Find the best source for any specific UPSC topic."""
+    if not check_auth(update): return
+    topic = " ".join(ctx.args) if ctx.args else ""
+    if not topic:
+        await update.message.reply_text("Usage: /source <topic>"); return
+    await thinking(update, f"🔍 Best source for: {topic}...")
+    prompt = (
+        f"BEST SOURCE FOR: {topic}\n\n"
+        "Give me the fastest path to mastery:\n"
+        "1. PRIMARY SOURCE — the one book/document every topper reads for this\n"
+        "2. GOVERNMENT SOURCE — any official report, committee, ministry document\n"
+        "3. NEWSPAPER SOURCE — Hindu editorial, EPW, PIB — is this a CA topic?\n"
+        "4. ONLINE SOURCE — any reliable website, Shodhganga, PRS India, etc.\n"
+        "5. WHAT TO IGNORE — popular but useless sources for this topic\n"
+        "6. TIME vs VALUE — is this topic worth deep reading or surface coverage?\n"
+        "7. ONE-PAGE SUMMARY — if you had to give me this topic in 100 words, what are they?"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/source", topic, resp, tok, lat)
+    await send_long(update, resp)
+
+
+# ================================================================
+# SECTION 7 — INTERVIEW
+# ================================================================
+
+async def cmd_daf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    await thinking(update, "🎙️ Interview room...")
+    prompt = (
+        "UPSC INTERVIEW BOARD — you are the Chairman.\n\n"
+        "DAF: Sai Harsha Gadde. Data Engineer, Calgary Canada. "
+        "Telugu Literature Optional. MS degree. "
+        "Azure/Databricks/AI background. Migrated from India.\n\n"
+        "Rules:\n"
+        "- Ask ONE high-pressure question connecting his unique background to Indian governance\n"
+        "- Don't ask generic questions — ask something that ONLY makes sense for his specific profile\n"
+        "- Stay in character as Chairman\n"
+        "- After he answers: give score /10, exact flaw, and the ideal answer structure\n\n"
+        "Choose from these angles (rotate each session):\n"
+        "  a) Data governance in India — his tech background vs India's data protection laws\n"
+        "  b) Brain drain — he left India, now wants to serve it via IAS\n"
+        "  c) Telugu identity — language preservation, State of Andhra\n"
+        "  d) Canadian governance — what can India learn?\n"
+        "  e) AI ethics — his expertise + India's AI policy gaps"
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/daf", "interview", resp, tok, lat)
+    await send_long(update, resp)
+
+
+async def cmd_mock_iq(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Full 5-question mock interview round."""
+    if not check_auth(update): return
+    await thinking(update, "🎙️ Mock Interview — 5 questions...")
+    prompt = (
+        "MOCK INTERVIEW ROUND — 5 questions, rapid fire.\n\n"
+        "You are a panel of 5 board members. Each asks ONE question.\n"
+        "Make the questions diverse:\n"
+        "  Member 1 (Chairman): DAF-based — his Canada/Tech background\n"
+        "  Member 2 (Senior IAS): Current Affairs — connect to governance\n"
+        "  Member 3 (Academic): Telugu Literature — test optional knowledge\n"
+        "  Member 4 (Technocrat): Technology policy — his domain\n"
+        "  Member 5 (Generalist): Surprise — something completely unexpected\n\n"
+        "After ALL 5 questions, Gad will answer them one by one.\n"
+        "For now: just ask all 5. Number them clearly. Don't evaluate yet."
+    )
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    log_hermes("/mock_iq", "mock-5q", resp, tok, lat)
+    await send_long(update, resp)
+
+
+# ================================================================
+# SECTION 8 — MOBILE PRACTICE (Databricks Volume)
+# ================================================================
+
+async def cmd_phone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    target = _get_target_date(ctx.args)
+    await thinking(update, f"📱 Quick summary: {target}...")
+    queue = await get_practice_queue_async(target)
+    if queue and queue.get("mode8_phone_summary"):
+        await send_long(update,
+            f"📱 QUICK SUMMARY — {target}\n{DIVIDER}\n\n{queue['mode8_phone_summary']}")
+        return
+    content = await fetch_volume_file_async(f"{VOLUME_BASE}/{target}/08_Phone_Summary.md")
+    if content:
+        await send_long(update, f"📱 QUICK SUMMARY — {target}\n{DIVIDER}\n\n{content}")
+        return
+    await update.message.reply_text(f"❌ No phone summary for {target}. Try /daily.")
+
+
+async def cmd_practice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    target = _get_target_date(ctx.args)
+    await thinking(update, f"📚 Practice package: {target}...")
+    queue = await get_practice_queue_async(target)
+    parts = []
+    tutor = (queue or {}).get("mode7_tutor_brief", "") or \
+            fetch_volume_file(f"{VOLUME_BASE}/{target}/07_AI_Tutor_Brief.md") or ""
+    if tutor:
+        parts.append(f"🧑‍🏫 TUTOR BRIEF\n{DIVIDER}\n{tutor}")
+    insights = fetch_volume_file(f"{VOLUME_BASE}/{target}/key_insights.md") or ""
+    if insights:
+        parts.append(f"💡 KEY INSIGHTS\n{DIVIDER}\n{insights}")
+    phone = (queue or {}).get("mode8_phone_summary", "")
+    if phone:
+        parts.append(f"📱 QUICK SUMMARY\n{DIVIDER}\n{phone}")
+    if parts:
+        await send_long(update,
+            f"📚 PRACTICE PACKAGE — {target}\n{DIVIDER_WIDE}\n\n" + "\n\n".join(parts))
+    else:
+        await update.message.reply_text(f"❌ No practice content for {target}. Try /daily.")
+
+
+async def cmd_podcast(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    target = _get_target_date(ctx.args)
+    await thinking(update, f"🎙️ Podcast: {target}...")
+    content = await fetch_volume_file_async(f"{VOLUME_BASE}/{target}/podcast_transcript.md")
+    if content:
+        await send_long(update, f"🎙️ PODCAST — {target}\n{DIVIDER_WIDE}\n\n{content}"); return
+    queue = await get_practice_queue_async(target)
+    if queue and queue.get("audio_script"):
+        await send_long(update,
+            f"🎙️ AUDIO SCRIPT — {target}\n{DIVIDER_WIDE}\n\n{queue['audio_script']}")
+    else:
+        await update.message.reply_text(f"❌ No podcast for {target}. Try /practice.")
+
+
+async def cmd_insights(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    target = _get_target_date(ctx.args)
+    await thinking(update, f"💡 Key insights: {target}...")
+    content = await fetch_volume_file_async(f"{VOLUME_BASE}/{target}/key_insights.md")
+    if content:
+        await send_long(update,
+            f"💡 KEY INSIGHTS — {target}\n{DIVIDER_WIDE}\n\n{content}"); return
+    queue = await get_practice_queue_async(target)
+    if queue and queue.get("mode1_practice_answer"):
+        await send_long(update,
+            f"💡 KEY TAKEAWAYS — {target}\n{DIVIDER_WIDE}\n\n"
+            f"Practice Answer:\n{queue['mode1_practice_answer']}\n\n"
+            f"Memory Hook:\n{queue.get('memory_hook','N/A')}")
+    else:
+        await update.message.reply_text(f"❌ No insights for {target}. Try /daily.")
+
+
+async def cmd_raw(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    args = ctx.args or []
+    if not args:
+        await update.message.reply_text(
+            "Usage: /raw <filename>  or  /raw <date> <filename>"); return
+    if len(args) >= 2 and re.match(r"^\d{4}-\d{2}-\d{2}$", args[0]):
+        target, filename = args[0], " ".join(args[1:])
+    else:
+        target, filename = date.today().isoformat(), " ".join(args)
+    content = await fetch_volume_file_async(f"{VOLUME_BASE}/{target}/{filename}")
+    if content:
+        await send_long(update, f"📄 {filename} — {target}\n{DIVIDER_WIDE}\n\n{content}")
+    else:
+        await update.message.reply_text(f"❌ Not found: {filename}. Use /files.")
+
+
+async def cmd_files(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    target = _get_target_date(ctx.args)
+    await update.message.reply_text(f"📂 Checking files: {target}...")
+    files = await list_volume_files_async(f"{VOLUME_BASE}/{target}")
+    if files:
+        emoji_map = {"phone":"📱","quick":"📱","podcast":"🎙️","transcript":"🎙️",
+                     "insight":"💡","tutor":"🧑‍🏫","mcq":"🧠","prelims":"🧠",
+                     "ethics":"⚖️","mains":"✍️","model":"✍️",
+                     "telugu":"📖","karl":"📋","knowledge":"📓","qa":"📓"}
+        msg = f"📂 FILES — {target}\n{DIVIDER}\n\n"
+        total = 0
+        for f in sorted(files, key=lambda x: x.get("name", "")):
+            name = f.get("name", "?")
+            size = f.get("file_size", 0) or 0
+            total += size
+            em = next((v for k,v in emoji_map.items() if k in name.lower()), "📄")
+            msg += f"{em} {name} ({size:,}B)\n"
+        msg += f"\n{DIVIDER}\n{len(files)} files | {total:,} bytes"
+        await update.message.reply_text(msg)
+    else:
+        await update.message.reply_text(
+            f"❌ No files for {target}.\n"
+            "Pipeline: 7AM IST NB6 → 8AM NB7 → 8:30AM NB8\n"
+            "Try: /files 2026-03-29")
+
+
+async def cmd_snapshot(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Combined daily snapshot — Hermes analysed."""
+    if not check_auth(update): return
+    await thinking(update, "📸 Building snapshot...")
+    today = date.today().isoformat()
+    content = await fetch_volume_file_async(f"{VOLUME_BASE}/{today}/00_Daily_Snapshot.md")
+    if not content:
+        daily  = (await fetch_volume_file_async(f"{VOLUME_BASE}/{today}/08_Phone_Summary.md")) or ""
+        insigh = (await fetch_volume_file_async(f"{VOLUME_BASE}/{today}/key_insights.md")) or ""
+        content = f"{daily}\n\n{insigh}".strip()
+    if content:
+        prompt = (
+            f"Today's snapshot content:\n{content[:4000]}\n\n"
+            "As Hermes:\n"
+            "1. TOP STORY — most UPSC-critical item today\n"
+            "2. MUST-REMEMBER FACT — one thing I cannot forget from today\n"
+            "3. MAINS QUESTION — frame one question from today's content\n"
+            "4. STUDY PRIORITY — given my weak topics, what should I focus on today?\n"
+            "5. MOTIVATION CHECK — am I on pace for AIR 1-75?"
+        )
+        mem = await get_memory_context_async()
+        resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+        log_hermes("/snapshot", today, resp, tok, lat)
+        await send_long(update, resp)
+    else:
+        await update.message.reply_text("❌ No snapshot yet. Try /daily.")
+
+
+# ================================================================
+# SECTION 9 — SYSTEM
+# ================================================================
+
+async def cmd_sync(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    try:
+        if not VAULT_PATH.exists():
+            await update.message.reply_text("⚠️ VAULT_PATH not found. Skipping git sync."); return
+        CLAUDE_MD = VAULT_PATH / ".claude" / "CLAUDE.md"
+        CLAUDE_MD.parent.mkdir(parents=True, exist_ok=True)
+        weak     = await asyncio.to_thread(_db_fetch, "SELECT subject,topic,miss_count FROM weak_topics ORDER BY miss_count DESC LIMIT 10")
+        concepts = await asyncio.to_thread(_db_fetch, "SELECT concept FROM concepts_taught ORDER BY timestamp DESC LIMIT 20")
+        flaws    = await asyncio.to_thread(_db_fetch, "SELECT flaw_type,frequency FROM mains_flaws ORDER BY frequency DESC LIMIT 5")
+        lines = [f"# HERMES Context — {date.today().isoformat()}", ""]
+        if weak:
+            lines += ["## Weak Topics"] + [f"- [{s}] {t} ({m}x)" for s,t,m in weak] + [""]
+        if flaws:
+            lines += ["## Mains Flaws"] + [f"- {f} ({n}x)" for f,n in flaws] + [""]
+        if concepts:
+            lines += ["## Concepts Taught", ", ".join(c for (c,) in concepts), ""]
+        await asyncio.to_thread(CLAUDE_MD.write_text, "\n".join(lines), encoding="utf-8")
+        try:
+            for cmd in [
+                ["git","-C",str(VAULT_PATH),"add",".claude/CLAUDE.md"],
+                ["git","-C",str(VAULT_PATH),"commit","-m",f"hermes sync {date.today()}"],
+                ["git","-C",str(VAULT_PATH),"push"],
+            ]:
+                r = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=30)
+                if r.returncode != 0 and "nothing to commit" not in r.stdout:
+                    await update.message.reply_text(f"⚠️ Git: {r.stderr[:200]}"); return
+            await update.message.reply_text(f"✅ Synced + pushed ({len(lines)} lines).")
+        except FileNotFoundError:
+            await update.message.reply_text(f"✅ CLAUDE.md written ({len(lines)} lines). git not found — not pushed.")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Sync failed: {str(e)[:300]}")
+
+
+async def cmd_compare(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Week comparison stats — Hermes vs main bot."""
+    if not check_auth(update): return
+    h_total = (_db_fetchone("SELECT COUNT(*) FROM hermes_interactions") or (0,))[0]
+    h_week  = (_db_fetchone("SELECT COUNT(*) FROM hermes_interactions WHERE timestamp>=date('now','-7 days')") or (0,))[0]
+    h_tok   = (_db_fetchone("SELECT COALESCE(SUM(tokens_used),0) FROM hermes_interactions WHERE timestamp>=date('now','-7 days')") or (0,))[0]
+    h_lat   = (_db_fetchone("SELECT COALESCE(AVG(latency_ms),0) FROM hermes_interactions WHERE latency_ms>0") or (0,))[0]
+    m_total = (_db_fetchone("SELECT COUNT(*) FROM interactions") or (0,))[0]
+    m_week  = (_db_fetchone("SELECT COUNT(*) FROM interactions WHERE timestamp>=date('now','-7 days')") or (0,))[0]
+    ratings = _db_fetch("SELECT AVG(rating), COUNT(*) FROM hermes_feedback WHERE timestamp>=date('now','-7 days')")
+    avg_r, r_count = ratings[0] if ratings else (None, 0)
+    await update.message.reply_text(
+        f"📊 WEEK COMPARISON\n{DIVIDER_WIDE}\n\n"
+        f"MAIN BOT (Databricks Llama):\n"
+        f"  Total: {m_total} | This week: {m_week}\n"
+        f"  Latency: ~10-30s | Cost: Databricks compute\n\n"
+        f"HERMES (Groq Llama — same model):\n"
+        f"  Total: {h_total} | This week: {h_week}\n"
+        f"  Tokens this week: {h_tok:,}\n"
+        f"  Avg latency: {h_lat:.0f}ms\n"
+        f"  Est. cost: $0.00\n"
+        f"  User rating: {f'{avg_r:.1f}/5 ({r_count} ratings)' if avg_r else 'Not rated yet'}\n\n"
+        f"{DIVIDER}\n"
+        f"Rate Hermes: /feedback <1-5> <note>\n"
+        f"Decide after 7 days — keep both, merge, or dissolve."
+    )
+
+
+async def cmd_feedback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    args = ctx.args or []
+    if not args:
+        await update.message.reply_text("Usage: /feedback <1-5> <note>"); return
+    try:
+        rating = int(args[0])
+        note   = " ".join(args[1:]) if len(args) > 1 else ""
+        _db_exec("INSERT INTO hermes_feedback(rating,note) VALUES(?,?)", (rating, note))
+        await update.message.reply_text(f"✅ Feedback: {rating}/5. Noted.")
+    except ValueError:
+        await update.message.reply_text("Usage: /feedback <1-5> <note>")
+
+
+async def cmd_backup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    backup_db()
+    backup_dir = DB_PATH.parent / ".backups"
+    backups = sorted(backup_dir.glob("*.db")) if backup_dir.exists() else []
+    msg = f"✅ Backup complete.\nTotal backups: {len(backups)} (keeping 14 days)"
+    if backups:
+        latest = backups[-1]
+        msg += f"\nLatest: {latest.name} ({latest.stat().st_size/1024:.1f} KB)"
+    await update.message.reply_text(msg)
+
+
+async def cmd_eval_log(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    history = _db_fetch(
+        "SELECT timestamp, topic, score FROM evaluation_history "
+        "ORDER BY timestamp DESC LIMIT 10")
+    if not history:
+        await update.message.reply_text("No evaluations yet. Use /evaluate."); return
+    report = f"📊 Evaluation History\n{DIVIDER}\n\n"
+    for ts, topic, score in history:
+        emoji = "🔴" if (score or 0) < 5 else "🟡" if (score or 0) < 7 else "🟢"
+        report += f"{emoji} {(topic or 'Unknown')[:30]:30} {score or 0:.1f}/10  {(ts or '')[:10]}\n"
+    report += "\n💡 Red (<5) → auto-added to /weak"
+    await update.message.reply_text(report)
+
+
+# ================================================================
+# FREE TEXT HANDLER — the main differentiator
+# Just type anything. Hermes responds with full context.
+# ================================================================
+
+async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not check_auth(update): return
+    user_msg = update.message.text
+    if not user_msg: return
+    await thinking(update)
+    mem = await get_memory_context_async()
+    resp, tok, lat = await asyncio.to_thread(call_hermes, user_msg, mem)
+    log_hermes("direct", user_msg, resp, tok, lat)
+    await send_long(update, resp)
+
+
+# ================================================================
+# SECTION 10 — MASTERY TRACKER (Databricks Delta table)
+# ================================================================
+
+async def cmd_mastery(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Show mastery dashboard from Databricks Delta table."""
+    if not check_auth(update):
+        return
+    await thinking(update, "📊 Querying mastery tracker...")
+    summary = await asyncio.to_thread(
+        run_sql,
+        "SELECT paper, COUNT(*) as total, "
+        "SUM(CASE WHEN status='mastered' THEN 1 ELSE 0 END) as mastered, "
+        "SUM(CASE WHEN status='in_progress' THEN 1 ELSE 0 END) as active, "
+        "SUM(CASE WHEN status='needs_work' THEN 1 ELSE 0 END) as weak, "
+        "SUM(CASE WHEN status='not_started' THEN 1 ELSE 0 END) as not_started, "
+        "ROUND(AVG(mastery_pct),1) as avg_pct "
+        "FROM upsc_catalog.rag.mastery_tracker GROUP BY paper ORDER BY paper")
+    if not summary:
+        await update.message.reply_text("❌ Could not query mastery_tracker.")
+        return
+
+    msg = "📊 MASTERY DASHBOARD\n" + DIVIDER_WIDE + "\n\n"
+    grand_total = 0
+    grand_mastered = 0
+    for r in summary:
+        p = r.get("paper", "?")
+        t = int(r.get("total", 0))
+        m = int(r.get("mastered", 0))
+        a = int(r.get("active", 0))
+        w = int(r.get("weak", 0))
+        ns = int(r.get("not_started", 0))
+        avg = float(r.get("avg_pct", 0))
+        grand_total += t
+        grand_mastered += m
+        msg += f"{p}: {avg:.0f}% avg\n"
+        msg += f"  🟢{m} 🟡{a} 🔴{w} ⚪{ns} / {t}\n\n"
+
+    pct = (grand_mastered / grand_total * 100) if grand_total > 0 else 0
+    msg += DIVIDER + "\n"
+    msg += f"OVERALL: {grand_mastered}/{grand_total} mastered ({pct:.1f}%)\n"
+
+    hy = await asyncio.to_thread(
+        run_sql,
+        "SELECT topic_id, topic_name, paper FROM upsc_catalog.rag.mastery_tracker "
+        "WHERE priority='HIGH_YIELD' AND status='not_started' "
+        "ORDER BY paper, topic_id LIMIT 10")
+    if hy:
+        msg += "\n🔥 HIGH-YIELD NOT STARTED:\n"
+        for r in hy:
+            msg += f"  {r['topic_id']} {r['topic_name']} [{r['paper']}]\n"
+
+    due = await asyncio.to_thread(
+        run_sql,
+        "SELECT topic_id, topic_name, next_review FROM upsc_catalog.rag.mastery_tracker "
+        "WHERE next_review <= current_date() AND status != 'mastered' "
+        "ORDER BY next_review LIMIT 5")
+    if due:
+        msg += "\n⏰ DUE FOR REVIEW:\n"
+        for r in due:
+            msg += f"  {r['topic_id']} {r['topic_name']} - due {r['next_review']}\n"
+
+    await send_long(update, msg)
+
+
+async def cmd_mastery_update(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Update mastery for a topic. Usage: /mastery_update GS1-001 45"""
+    if not check_auth(update):
+        return
+    args = ctx.args or []
+    if len(args) < 2:
+        await update.message.reply_text(
+            "Usage: /mastery_update <topic_id> <mastery_pct> [status]\n"
+            "Example: /mastery_update GS1-001 45 in_progress\n"
+            "Status auto-set: <40=needs_work, 40-79=in_progress, 80+=mastered")
+        return
+
+    topic_id = args[0].upper()
+    if not re.fullmatch(r"[A-Z0-9_-]{3,40}", topic_id):
+        await update.message.reply_text("❌ Invalid topic_id format")
+        return
+
+    try:
+        pct = float(args[1])
+    except ValueError:
+        await update.message.reply_text("❌ mastery_pct must be a number 0-100")
+        return
+    if not math.isfinite(pct):
+        await update.message.reply_text("❌ mastery_pct must be a finite number")
+        return
+    if pct < 0 or pct > 100:
+        await update.message.reply_text("❌ mastery_pct must be between 0 and 100")
+        return
+
+    if len(args) > 2:
+        status = args[2].strip().lower()
+    elif pct >= 80:
+        status = "mastered"
+    elif pct >= 40:
+        status = "in_progress"
+    elif pct > 0:
+        status = "needs_work"
+    else:
+        status = "not_started"
+
+    allowed_status = {
+        "mastered": "mastered",
+        "in_progress": "in_progress",
+        "needs_work": "needs_work",
+        "not_started": "not_started",
+    }
+    if status not in allowed_status:
+        await update.message.reply_text("❌ Invalid status. Use mastered/in_progress/needs_work/not_started")
+        return
+
+    safe_topic_id = sql_quote_literal(topic_id)
+    safe_status = sql_quote_literal(allowed_status[status])
+    pct_sql = f"{pct:.2f}".rstrip("0").rstrip(".")
+
+    exists = await asyncio.to_thread(
+        run_sql,
+        f"SELECT 1 AS present FROM upsc_catalog.rag.mastery_tracker "
+        f"WHERE topic_id = {safe_topic_id} LIMIT 1")
+    if not exists:
+        await update.message.reply_text(
+            f"❌ Unknown topic_id: {topic_id}. Run /mastery to view valid IDs.")
+        return
+
+    result = await asyncio.to_thread(
+        run_sql,
+        f"UPDATE upsc_catalog.rag.mastery_tracker SET "
+        f"mastery_pct = {pct_sql}, status = {safe_status}, "
+        f"last_studied = current_date(), study_count = study_count + 1, "
+        f"next_review = CASE "
+        f"WHEN study_count = 0 THEN date_add(current_date(), 7) "
+        f"WHEN study_count = 1 THEN date_add(current_date(), 15) "
+        f"WHEN study_count = 2 THEN date_add(current_date(), 30) "
+        f"WHEN study_count >= 3 THEN date_add(current_date(), 60) "
+        f"ELSE date_add(current_date(), 7) END, "
+        f"updated_at = current_timestamp() "
+        f"WHERE topic_id = {safe_topic_id}")
+
+    if result is not None:
+        await update.message.reply_text(
+            f"✅ Updated {topic_id}: {pct}% | {status}\n"
+            f"Spaced review scheduled.")
+        log_hermes("/mastery_update", f"{topic_id} {pct}% {status}", "updated")
+    else:
+        await update.message.reply_text(f"❌ Failed. Check topic_id: {topic_id}")
+
+
+# ================================================================
+# MAIN
+# ================================================================
+
+def main():
+    global groq_client
+
+    if not BOT_TOKEN:
+        print("ERROR: Set HERMES_BOT_TOKEN"); return
+    if not GROQ_API_KEY:
+        print("ERROR: Set GROQ_API_KEY — free at console.groq.com"); return
+    if not ALLOWED_USER_ID:
+        print("WARNING: TELEGRAM_USER_ID not set — bot open to everyone!")
+    if not DATABRICKS_TOKEN:
+        print("WARNING: DATABRICKS_TOKEN not set — Databricks-backed commands may fail.")
+    if not DATABRICKS_HOST:
+        print("WARNING: DATABRICKS_HOST not set — Databricks-backed commands may fail.")
+    if not SQL_WAREHOUSE_ID:
+        print("WARNING: DATABRICKS_SQL_WAREHOUSE_ID not set — SQL-backed commands may fail.")
+
+    groq_client = Groq(api_key=GROQ_API_KEY)
+    init_db()
+
+    log.info(f"DB       : {DB_PATH}")
+    log.info(f"Vault    : {VAULT_PATH} ({'exists' if VAULT_PATH.exists() else 'not found'})")
+    log.info(f"Model    : {GROQ_MODEL}")
+    log.info(f"DBX Host : {DATABRICKS_HOST}")
+
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    commands = [
+        # Core
+        ("start",      cmd_start),     ("help",       cmd_help),
+        ("cancel",     cmd_cancel),    ("teach",      cmd_teach),
+        ("log",        cmd_log),       ("eod",        cmd_eod),
+        ("daily",      cmd_daily),     ("dump",       cmd_dump),
+        ("stats",      cmd_stats),     ("weak",       cmd_weak),
+        # Prelims
+        ("quiz",       cmd_quiz),      ("trap",       cmd_trap),
+        ("drill",      cmd_drill),     ("pyq",        cmd_pyq),
+        ("csat",       cmd_csat),      ("pattern",    cmd_pattern),
+        ("examiner",   cmd_examiner),
+        # Mains
+        ("evaluate",   cmd_evaluate),  ("model",      cmd_model),
+        ("essay",      cmd_essay),     ("framework",  cmd_framework),
+        ("structure",  cmd_structure),
+        # Active Learning
+        ("socratic",   cmd_socratic),  ("feynman",    cmd_feynman),
+        ("why",        cmd_why),       ("visual",     cmd_visual),
+        ("recall",     cmd_recall),    ("simplify",   cmd_simplify),
+        ("progress",   cmd_progress),
+        # Telugu Optional
+        ("telugu",     cmd_telugu),    ("tel_kavya",  cmd_tel_kavya),
+        ("tel_prosody",cmd_tel_prosody),("tel_grammar",cmd_tel_grammar),
+        ("tel_modern", cmd_tel_modern),("tel_eval",   cmd_tel_eval),
+        ("tel_pyq",    cmd_tel_pyq),
+        # Books
+        ("ncert",      cmd_ncert),     ("book",       cmd_book),
+        ("source",     cmd_source),
+        # Interview
+        ("daf",        cmd_daf),       ("mock_iq",    cmd_mock_iq),
+        # Mobile
+        ("practice",   cmd_practice),  ("podcast",    cmd_podcast),
+        ("insights",   cmd_insights),  ("phone",      cmd_phone),
+        ("files",      cmd_files),     ("raw",        cmd_raw),
+        ("snapshot",   cmd_snapshot),
+        # System
+        ("sync",       cmd_sync),      ("compare",    cmd_compare),
+        ("feedback",   cmd_feedback),  ("backup",     cmd_backup),
+        ("eval_log",   cmd_eval_log),
+        ("mastery",    cmd_mastery),   ("mastery_update", cmd_mastery_update),
+    ]
+
+    for name, handler in commands:
+        app.add_handler(CommandHandler(name, handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    def _shutdown(sig, frame):
+        log.info(f"Signal {sig} — shutting down.")
+        app.stop_running()
+
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT,  _shutdown)
+
+    log.info(f"🧠 HERMES FULL — {len(commands)} commands — Groq/{GROQ_MODEL} — $0/month")
+    app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+
+
+if __name__ == "__main__":
+    main()
+
+
+# ================================================================
+# SYSTEMD SERVICE — /etc/systemd/system/hermes-bot.service
+# ================================================================
+# [Unit]
+# Description=Hermes UPSC Full Bot (Groq — Free)
+# After=network-online.target
+# Wants=network-online.target
+#
+# [Service]
+# Type=simple
+# User=YOUR_USERNAME
+# WorkingDirectory=/home/YOUR_USERNAME/bots
+# EnvironmentFile=/home/YOUR_USERNAME/bots/.env_hermes
+# ExecStart=/usr/bin/python3 /home/YOUR_USERNAME/bots/hermes_full.py
+# Restart=always
+# RestartSec=10
+# StandardOutput=journal
+# StandardError=journal
+#
+# [Install]
+# WantedBy=multi-user.target
+# ================================================================
+
+
+# COMMAND ----------
+
+# DBTITLE 1,Save hermes_full.py to disk (reads code from cell above)
+# ══════════════════════════════════════════════════════════════════════════
+# Reads the hermes_full.py code from the cell above (cell 13),
+# applies the cmd_practice async fix, and saves to disk.
+# Cell 13 is NOT meant to be executed — it's raw source code.
+# ══════════════════════════════════════════════════════════════════════════
+import json, re, os
+
+# Read this notebook's .ipynb to extract cell 13 source
+nb_base = "/Workspace/Users/admin@mngenvmcap915189.onmicrosoft.com/Hermes Bot Patch mastery tracker integration"
+for ext in ["", ".ipynb", ".py"]:
+    nb_path = nb_base + ext
+    if os.path.exists(nb_path):
+        break
 else:
-    print(f"\u26a0\ufe0f Endpoint delete: {r.status_code} {r.text[:200]}")
+    raise FileNotFoundError(f"Notebook not found at {nb_base}")
 
-# 2) DELETE all 10 model versions
-model_name = "upsc_catalog.rag.upsc_tutor_agent"
-for v in range(1, 11):
-    r = requests.post(f"{host}/api/2.0/mlflow/model-versions/delete", headers=headers,
-                      json={"name": model_name, "version": str(v)})
-    status = "\u2705" if r.status_code == 200 else "\u26a0\ufe0f" if r.status_code == 404 else "\u274c"
-    print(f"  {status} Version {v}: {r.status_code}")
+print(f"Reading notebook: {nb_path}")
 
-# 3) DELETE registered model
-r = requests.post(f"{host}/api/2.0/mlflow/registered-models/delete", headers=headers,
-                  json={"name": model_name})
-if r.status_code == 200:
-    print(f"\n\u2705 Deleted registered model: {model_name}")
-elif r.status_code == 404:
-    print(f"\n\u2139\ufe0f Model already deleted: {model_name}")
-else:
-    print(f"\n\u26a0\ufe0f Model delete: {r.status_code} {r.text[:200]}")
+with open(nb_path, "r", encoding="utf-8") as f:
+    raw = f.read()
 
-print("\n--- Done. Monthly savings: ~$55 ---")
+# Try JSON (ipynb) format first
+hermes_code = None
+try:
+    nb = json.loads(raw)
+    for cell in nb.get("cells", []):
+        src = "".join(cell.get("source", []))
+        if "#!/usr/bin/env python3" in src and "HERMES" in src and len(src) > 50000:
+            hermes_code = src
+            break
+except (json.JSONDecodeError, AttributeError):
+    pass
+
+# Fallback: search raw text for the code block
+if not hermes_code:
+    # Look for the shebang-delimited block
+    import re as _re
+    m = _re.search(r'(#!/usr/bin/env python3.*?WantedBy=multi-user\.target[^"]*)', raw, _re.DOTALL)
+    if m:
+        hermes_code = m.group(1)
+        # Unescape JSON string escapes
+        hermes_code = hermes_code.replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"')
+
+if not hermes_code:
+    raise RuntimeError("Could not find hermes_full.py code in this notebook. "
+                       "Make sure cell 13 contains the full bot code.")
+
+print(f"Found hermes code: {len(hermes_code):,} chars, {len(hermes_code.splitlines())} lines")
+
+# ── Apply cmd_practice async fix (2 remaining sync network calls) ──
+fixes = 0
+old_tutor = 'fetch_volume_file(f"{VOLUME_BASE}/{target}/07_AI_Tutor_Brief.md")'
+new_tutor = '(await fetch_volume_file_async(f"{VOLUME_BASE}/{target}/07_AI_Tutor_Brief.md"))'
+if old_tutor in hermes_code:
+    hermes_code = hermes_code.replace(old_tutor, new_tutor)
+    fixes += 1
+    print(f"  ✅ FIX: cmd_practice tutor brief → async")
+
+old_insights = 'insights = fetch_volume_file(f"{VOLUME_BASE}/{target}/key_insights.md")'
+new_insights = 'insights = (await fetch_volume_file_async(f"{VOLUME_BASE}/{target}/key_insights.md"))'
+if old_insights in hermes_code:
+    hermes_code = hermes_code.replace(old_insights, new_insights)
+    fixes += 1
+    print(f"  ✅ FIX: cmd_practice insights → async")
+
+if fixes == 0:
+    print("  ℹ️ cmd_practice already patched")
+
+# ── Fix docstring indentation (extra indent on HERMES_DB export) ──
+hermes_code = hermes_code.replace(
+    '    export HERMES_DB=<path',
+    '  export HERMES_DB=<path'
+)
+
+# ── Syntax check ──
+try:
+    compile(hermes_code, "hermes_full.py", "exec")
+    print("\n✅ Python syntax OK")
+except SyntaxError as e:
+    lines = hermes_code.splitlines()
+    print(f"\n❌ Syntax error at line {e.lineno}: {e.msg}")
+    if e.lineno:
+        for j in range(max(0, e.lineno - 3), min(e.lineno + 2, len(lines))):
+            marker = ">>>" if j == e.lineno - 1 else "   "
+            print(f"  {marker} {j+1}: {lines[j]}")
+
+# ── Count commands ──
+cmd_count = len(re.findall(r'\("\w+"\s*,\s*cmd_\w+\)', hermes_code))
+print(f"Commands registered: {cmd_count}")
+
+# ── Feature checklist ──
+print("\n── Feature Checklist ──")
+checks = [
+    ('get_memory_context_async', 'Async memory context'),
+    ('_MEMORY_CACHE', 'Memory cache'),
+    ('sql_quote_literal', 'SQL injection protection'),
+    ('math.isfinite', 'Float validation'),
+    ('allowed_status', 'Status allowlist'),
+    ('fetch_volume_file_async', 'Async volume fetcher'),
+    ('.hermes_memory.db', 'Dedicated SQLite DB'),
+    ('HERMES_DB', 'HERMES_DB env var'),
+    ('auto-registered', 'Auto command count'),
+]
+all_ok = True
+for pattern, label in checks:
+    found = pattern in hermes_code
+    if not found:
+        all_ok = False
+    print(f"  {'✅' if found else '❌'} {label}")
+
+# ── Write to Drafts (main deploy location) ──
+drafts_path = "/Workspace/Users/admin@mngenvmcap915189.onmicrosoft.com/Drafts/hermes_full.py"
+with open(drafts_path, "w", encoding="utf-8") as f:
+    f.write(hermes_code)
+print(f"\n✅ Saved: {drafts_path}")
+
+# ── Also write to home directory copy ──
+home_path = "/Workspace/Users/admin@mngenvmcap915189.onmicrosoft.com/hermes_full.py"
+with open(home_path, "w", encoding="utf-8") as f:
+    f.write(hermes_code)
+print(f"✅ Saved: {home_path}")
+
+final_lines = len(hermes_code.splitlines())
+print(f"\n{'═'*60}")
+print(f"  FINAL: {final_lines} lines | {len(hermes_code):,} chars | {cmd_count} commands")
+status = "✅ READY FOR VM DEPLOY" if all_ok else "⚠️ CHECK MISSING FEATURES ABOVE"
+print(f"  STATUS: {status}")
+print(f"{'═'*60}")
