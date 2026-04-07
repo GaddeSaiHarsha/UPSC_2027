@@ -2052,13 +2052,25 @@ async def cmd_mastery_update(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "Status auto-set: <40=needs_work, 40-79=in_progress, 80+=mastered")
         return
     topic_id = args[0].upper()
+    # Validate topic_id format to prevent SQL injection (e.g. GS1-001, GS2-045)
+    if not re.match(r'^[A-Z0-9]+-\d{3}$', topic_id):
+        await update.message.reply_text("\u274c topic_id must be like GS1-001, GS2-045, etc.")
+        return
     try:
         pct = float(args[1])
     except ValueError:
         await update.message.reply_text("\u274c mastery_pct must be a number 0-100")
         return
+    if not (0 <= pct <= 100):
+        await update.message.reply_text("\u274c mastery_pct must be between 0 and 100")
+        return
+    VALID_STATUSES = {"mastered", "in_progress", "needs_work", "not_started"}
     if len(args) > 2:
         status = args[2]
+        if status not in VALID_STATUSES:
+            await update.message.reply_text(
+                f"\u274c status must be one of: {', '.join(sorted(VALID_STATUSES))}")
+            return
     elif pct >= 80:
         status = "mastered"
     elif pct >= 40:
@@ -2067,6 +2079,8 @@ async def cmd_mastery_update(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         status = "needs_work"
     else:
         status = "not_started"
+    # Use validated/sanitised values — topic_id is alphanumeric+dash,
+    # pct is a float, status is from a whitelist
     result = run_sql(
         f"UPDATE upsc_catalog.rag.mastery_tracker SET "
         f"mastery_pct = {pct}, status = '{status}', "
