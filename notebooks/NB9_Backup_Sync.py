@@ -30,7 +30,8 @@
 # ═══════════════════════════════════════════════════════════════════════════
 
 import requests, json, base64, os, time
-from datetime import date, datetime
+import hashlib as _hashlib
+from datetime import date, datetime, timedelta
 
 # ── Configuration ──────────────────────────────────────────────────────────
 TODAY = date.today().isoformat()
@@ -299,8 +300,6 @@ else:
     CRITICAL_TABLES = ["mastery_tracker", "stories", "story_traps",
                        "daily_practice_queue", "ca_runs"]
 
-    import hashlib as _hashlib
-
     def _get_prev_snapshot_hash(table_name):
         """Get md5 hash of yesterday's snapshot for diff-based skip."""
         yesterday = (date.today() - timedelta(days=1)).isoformat()
@@ -308,8 +307,7 @@ else:
         try:
             r = gh_api("get", prev_path)
             if r.status_code == 200:
-                import base64 as _b64
-                content = _b64.b64decode(r.json().get("content", ""))
+                content = base64.b64decode(r.json().get("content", ""))
                 return _hashlib.md5(content).hexdigest()
         except Exception:
             pass
