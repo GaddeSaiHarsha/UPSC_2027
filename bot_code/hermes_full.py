@@ -687,7 +687,7 @@ def get_session(ctx):
 
     try:
         updated_at = datetime.fromisoformat(session.get("updated_at", ""))
-    except Exception:
+    except ValueError:
         clear_session(ctx)
         return None
 
@@ -756,7 +756,7 @@ def parse_quiz_payload(raw_text: str) -> tuple[str, dict]:
 
     try:
         key = json.loads(key_block)
-    except Exception as e:
+    except json.JSONDecodeError as e:
         raise ValueError(f"Invalid quiz KEY JSON: {e}")
 
     required = ["topic", "concept", "correct_option", "explanation", "trap", "rule"]
