@@ -886,7 +886,7 @@ def parse_drill_payload(raw_text: str) -> tuple[str, list[dict]]:
         raise ValueError(f"Invalid drill KEY JSON: {e}")
 
     if not isinstance(keys, list) or len(keys) != 3:
-        raise ValueError(f"Expected 3 drill keys, got {type(keys).__name__}({len(keys) if isinstance(keys, list) else ''})")
+        raise ValueError(f"Expected 3 drill keys, got {type(keys).__name__} with {len(keys) if isinstance(keys, list) else 'unknown'} items")
 
     required = ["qno", "topic", "concept", "correct_option", "explanation", "trap", "rule"]
     for i, k in enumerate(keys):
@@ -2360,7 +2360,9 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         answers = parse_drill_answers(user_msg)
         if set(answers.keys()) != {1, 2, 3}:
+            parsed_info = f"Received answers for: {sorted(answers.keys()) or 'none'}" if answers else "No valid answers detected"
             await update.message.reply_text(
+                f"Expected answers for questions 1, 2, 3. {parsed_info}\n\n"
                 "Reply with all 3 answers in one line.\n"
                 "Examples:\n"
                 "1-B 2-D 3-A\n"
