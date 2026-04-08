@@ -732,14 +732,17 @@ if transcript:
             if (i + 1) % 5 == 0:
                 print(f"      Chunk {i+1}/{len(chunks)} done...")
 
-        # Save to local temp, then copy to Volume
+        # Save to local temp, then write to Volume
         with open(temp_local, 'wb') as f:
             f.write(combined_audio.getvalue())
 
         audio_size = len(combined_audio.getvalue())
 
-        # Copy to Volume
-        dbutils.fs.cp(f"file:{temp_local}", audio_path)
+        # Write directly to Volume (serverless compatible — no dbutils.fs.cp)
+        os.makedirs(os.path.dirname(audio_path), exist_ok=True)
+        with open(audio_path, "wb") as f_out:
+            with open(temp_local, "rb") as f_in:
+                f_out.write(f_in.read())
 
         # Estimate duration (~150 words/min, ~6 bytes/ms for MP3)
         word_count = len(audio_text.split())
@@ -753,7 +756,10 @@ if transcript:
 
         # Also save to Obsidian CA folder for easy access
         obsidian_audio = f"{OBSIDIAN_VOL}/UPSC_2026/01_Current_Affairs/2026/podcast_{TODAY}.mp3"
-        dbutils.fs.cp(f"file:{temp_local}", obsidian_audio)
+        os.makedirs(os.path.dirname(obsidian_audio), exist_ok=True)
+        with open(obsidian_audio, "wb") as f_out:
+            with open(temp_local, "rb") as f_in:
+                f_out.write(f_in.read())
         print(f"   📓 Obsidian: {obsidian_audio}")
 
         # Clean up
@@ -919,6 +925,11 @@ print(f"✅ Integration setup complete!")
 
 # COMMAND ----------
 
+# DBTITLE 1,Install NotebookLM async dependencies
+# MAGIC %pip install httpcore[asyncio] anyio notebooklm-py nest_asyncio -q
+
+# COMMAND ----------
+
 # DBTITLE 1,Cell 10: NotebookLM Automated Podcast (notebooklm-py)
 # ═══════════════════════════════════════════════════════════════════════════
 # CELL 10: NotebookLM — Consolidated Multi-Day Podcast (PRODUCTION)
@@ -933,7 +944,7 @@ import subprocess, os, json, asyncio
 from datetime import date, timedelta, datetime
 
 try:
-    subprocess.check_call(["pip", "install", "notebooklm-py", "nest_asyncio", "-q"],
+    subprocess.check_call(["pip", "install", "notebooklm-py", "nest_asyncio", "httpcore[asyncio]", "anyio", "-q"],
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     from notebooklm import NotebookLMClient
     import nest_asyncio
@@ -955,9 +966,9 @@ def safe_read(path):
     except:
         return ""
 
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ═══════════════════════════════════════════════════════════════════════════
 # PHASE 1: Build Consolidated Source (Section A-H structure)
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ═══════════════════════════════════════════════════════════════════════════
 print("\U0001f399\ufe0f NotebookLM \u2014 Consolidated Multi-Day Podcast")
 print(f"{'='*60}")
 print("\n\U0001f4e6 PHASE 1: Building consolidated source...")
@@ -1092,9 +1103,9 @@ print(f"   \u2705 Source built: {len(consolidated):,} chars ({len(consolidated)/
 print(f"   \U0001f4c5 Days: {days_display}")
 print(f"   \U0001f4c1 {out_path}")
 
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ═══════════════════════════════════════════════════════════════════════════
 # PHASE 2: Generate NotebookLM Podcast (async)
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ═══════════════════════════════════════════════════════════════════════════
 async def run_notebooklm():
     print(f"\n\U0001f3a7 PHASE 2: NotebookLM Podcast Generation")
 
