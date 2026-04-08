@@ -886,7 +886,7 @@ def parse_drill_payload(raw_text: str) -> tuple[str, list[dict]]:
         raise ValueError(f"Invalid drill KEY JSON: {e}")
 
     if not isinstance(keys, list) or len(keys) != 3:
-        raise ValueError(f"Expected 3 drill keys, got {len(keys) if isinstance(keys, list) else 'non-list'}")
+        raise ValueError(f"Expected 3 drill keys, got {type(keys).__name__}({len(keys) if isinstance(keys, list) else ''})")
 
     required = ["qno", "topic", "concept", "correct_option", "explanation", "trap", "rule"]
     for i, k in enumerate(keys):
