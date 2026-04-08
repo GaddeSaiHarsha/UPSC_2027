@@ -1,0 +1,692 @@
+[
+  {
+    "date":"2026-03-20",
+    "story_id":"story_1",
+    "slug":"gulf-force-majeure-invoked",
+    "title":"Gulf Energy Producers Invoke Force Majeure",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Economy|IR",
+    "keywords":"[\"force majeure\", \"energy security\"]"
+  },
+  {
+    "date":"2026-03-20",
+    "story_id":"story_2",
+    "slug":"navic-atomic-clock-failure",
+    "title":"Atomic Clock Failure in NavIC System",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"S&T|Security",
+    "keywords":"[\"NavIC\", \"atomic clock\"]"
+  },
+  {
+    "date":"2026-03-20",
+    "story_id":"story_3",
+    "slug":"pinaka-mbrl-operational",
+    "title":"Pinaka MBRL System Fully Operationalized",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Security|S&T",
+    "keywords":"[\"Pinaka\", \"MBRL\", \"DRDO\"]"
+  },
+  {
+    "date":"2026-03-20",
+    "story_id":"story_4",
+    "slug":"us-section-301-india-probe",
+    "title":"US Section 301 Probe on India Trade Practices",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Economy",
+    "keywords":"[\"Section 301\", \"US Trade Act 1974\"]"
+  },
+  {
+    "date":"2026-03-20",
+    "story_id":"story_5",
+    "slug":"sujal-gaon-id-jjm",
+    "title":"Sujal Gaon ID Scheme under Jal Jeevan Mission",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Governance|Environment",
+    "keywords":"[\"Jal Jeevan Mission\", \"Sujal Gaon\"]"
+  },
+  {
+    "date":"2026-03-20",
+    "story_id":"story_6",
+    "slug":"iran-sejjil-missile-test",
+    "title":"Iran Tests Sejjil Ballistic Missile",
+    "priority":"LOW",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Security",
+    "keywords":"[\"Sejjil\", \"ballistic missile\"]"
+  },
+  {
+    "date":"2026-03-27",
+    "story_id":"story_1",
+    "slug":"malaysia-voids-us-trade-deal",
+    "title":"Malaysia Voids US Trade Deal After IEEPA Ruling; India Delays $500B Pact",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Economy|Trade Policy",
+    "keywords":"[\"Section 301\", \"IEEPA ruling\", \"trade pact\"]"
+  },
+  {
+    "date":"2026-03-30",
+    "story_id":"story_1",
+    "slug":"hormuz-crisis-india-growth-inflation",
+    "title":"Hormuz Strait Disruption Threatens India's FY27 Growth as Crude Prices Surge to $110\/Barrel",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\", \"GS2\"]",
+    "topic_cluster":"Economy|IR|Energy Security",
+    "keywords":"[\"Strait of Hormuz\", \"crude oil prices\", \"current account deficit\", \"monetary policy\", \"inflation\", \"external sector\", \"FY27 growth\"]"
+  },
+  {
+    "date":"2026-03-30",
+    "story_id":"story_1",
+    "slug":"economy-moderation-west-asia-shock",
+    "title":"Finance Ministry Flags Early Economic Slowdown Amid West Asia Crisis",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Economy|IR",
+    "keywords":"[\"economic-review\", \"crude-shock\", \"high-frequency-indicators\"]"
+  },
+  {
+    "date":"2026-03-30",
+    "story_id":"story_2",
+    "slug":"sc-gst-compensation-states",
+    "title":"Supreme Court Upholds States' GST Compensation Claims",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Governance|Economy",
+    "keywords":"[\"GST-cess\", \"fiscal-devolution\", \"Article-270\"]"
+  },
+  {
+    "date":"2026-03-30",
+    "story_id":"story_3",
+    "slug":"isro-rlv-hex02-test",
+    "title":"ISRO Succeeds in RLV-TD HEX-02 Hypersonic Re-entry Test",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"S&T|Security",
+    "keywords":"[\"reusable-launch\", \"hypersonic-reentry\", \"atmanirbhar-space\"]"
+  },
+  {
+    "date":"2026-03-30",
+    "story_id":"story_4",
+    "slug":"niti-urban-heat-islands",
+    "title":"NITI Aayog Flags Urban Heat Islands in 50+ Cities",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS1\", \"GS3\"]",
+    "topic_cluster":"Environment|Society",
+    "keywords":"[\"urban-heat\", \"heat-action-plans\", \"ndma\"]"
+  },
+  {
+    "date":"2026-03-31",
+    "story_id":"story_1",
+    "slug":"fy26-market-worst-selloff",
+    "title":"FY26: India's Worst Equity Selloff in Six Years Amid Oil Shocks and FPI Exodus",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Economy|IR|Energy Security",
+    "keywords":"[\"FPI outflow\", \"crude oil spike\", \"Nifty Sensex\"]"
+  },
+  {
+    "date":"2026-03-31",
+    "story_id":"story_2",
+    "slug":"modi-parliament-iran-war-lpg-crisis",
+    "title":"PM Modi Compares Iran War Fallout to COVID; LPG Shortages Hit Households",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\", \"GS2\"]",
+    "topic_cluster":"Economy|IR|Energy Security|Governance",
+    "keywords":"[\"LPG shortage\", \"Hormuz\", \"Modi speech\"]"
+  },
+  {
+    "date":"2026-03-31",
+    "story_id":"story_3",
+    "slug":"stagflation-risks-amid-rupee-fall",
+    "title":"India Far from Stagflation Despite Rupee at Record \u20b994.88, 7.4% GDP Projection",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Economy|IR",
+    "keywords":"[\"stagflation\", \"rupee depreciation\", \"CPI 3.21%\"]"
+  },
+  {
+    "date":"2026-04-01",
+    "story_id":"story_1",
+    "slug":"shipping-rates-hike-exporters",
+    "title":"Indian Exporters Face 40% Shipping Rate Surge Amid Iran Conflict",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Economy|IR",
+    "keywords":"[\"shipping rates\", \"Strait of Hormuz\", \"geopolitical crisis\"]"
+  },
+  {
+    "date":"2026-04-01",
+    "story_id":"story_2",
+    "slug":"rbi-rupee-intervention-fpi-outflows",
+    "title":"RBI Curbs Bank Forex Positions as Rupee Faces Crude-FPI Headwinds",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Economy|IR",
+    "keywords":"[\"rupee depreciation\", \"FPI outflows\", \"RBI intervention\"]"
+  },
+  {
+    "date":"2026-04-01",
+    "story_id":"story_3",
+    "slug":"finance-act-2026-notified",
+    "title":"Government Notifies Finance Act 2026 with 4.3% Fiscal Deficit Target",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Economy|Governance",
+    "keywords":"[\"Finance Act 2026\", \"fiscal deficit\", \"buyback tax\"]"
+  },
+  {
+    "date":"2026-04-05",
+    "story_id":"story_1",
+    "slug":"sc-upholds-gram-sabha-forest-rights",
+    "title":"Supreme Court Reinforces Gram Sabha's Veto Power in Forest Land Diversion Under FRA",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Judiciary|Legal",
+    "keywords":"[\"Forest Rights Act\", \"Gram Sabha\", \"tribal rights\", \"forest land\", \"environmental governance\", \"PESA Act\"]"
+  },
+  {
+    "date":"2026-04-05",
+    "story_id":"story_2",
+    "slug":"govt-boosts-millet-cultivation",
+    "title":"New Scheme Launched to Promote Millet Cultivation and Value Addition for Nutritional Security",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\", \"GS2\"]",
+    "topic_cluster":"Agriculture|Food Security",
+    "keywords":"[\"Millets\", \"nutritional security\", \"climate-resilient crops\", \"farmer income\", \"food diversification\", \"IYOM 2023\"]"
+  },
+  {
+    "date":"2026-04-05",
+    "story_id":"story_3",
+    "slug":"nep-vocational-education-framework",
+    "title":"Ministry of Education Unveils Framework for Integrating Vocational Education into Mainstream Schools",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Education|NEP",
+    "keywords":"[\"National Education Policy 2020\", \"vocational education\", \"skill development\", \"school curriculum\", \"employability\", \"NEP implementation\"]"
+  },
+  {
+    "date":"2026-04-05",
+    "story_id":"story_4",
+    "slug":"report-urges-ai-ethics-framework",
+    "title":"Report Urges National AI Ethics Framework for Responsible Public Service Deployment",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS4\", \"GS2\", \"GS3\"]",
+    "topic_cluster":"Ethics",
+    "keywords":"[\"AI ethics\", \"public services\", \"governance\", \"data privacy\", \"accountability\", \"algorithmic bias\", \"digital governance\"]"
+  },
+  {
+    "date":"2026-03-21",
+    "story_id":"story_1",
+    "slug":"modi-kolkata-rally-tmc-attack",
+    "title":"PM Modi Attacks TMC Gundagardi at Kolkata Rally",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS2\"]",
+    "topic_cluster":"Governance",
+    "keywords":"[\"federalism\", \"elections\", \"governance\"]"
+  },
+  {
+    "date":"2026-03-21",
+    "story_id":"story_2",
+    "slug":"idf-strikes-iran-missile-sites",
+    "title":"IDF Strikes 700+ Iran Missile Targets, No Regime Change Goal",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\"]",
+    "topic_cluster":"IR|Security",
+    "keywords":"[\"Israel-Iran\", \"ballistic missiles\", \"Middle East\"]"
+  },
+  {
+    "date":"2026-03-21",
+    "story_id":"story_3",
+    "slug":"china-humanoid-robot-100km-trek",
+    "title":"China Humanoid Robot Sets Guinness Record with 100km Trek",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"S&T",
+    "keywords":"[\"robotics\", \"AI\", \"Guinness record\"]"
+  },
+  {
+    "date":"2026-03-21",
+    "story_id":"story_4",
+    "slug":"mumbai-flights-navi-mumbai-shift",
+    "title":"Peak-Hour Mumbai Flights Shift to Navi Mumbai Airport",
+    "priority":"LOW",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Economy",
+    "keywords":"[\"aviation\", \"infrastructure\", \"UDAN\"]"
+  },
+  {
+    "date":"2026-03-22",
+    "story_id":"story_1",
+    "slug":"operation-epic-fury-iran-miscalculation",
+    "title":"Operation Epic Fury: US-Iran Conflict Exposes Strategic Miscalculation and Global Energy Vulnerability",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Security|Economy",
+    "keywords":"[\"Operation Epic Fury\", \"Strait of Hormuz\", \"Iran-US conflict\", \"energy security\", \"regional escalation\", \"UAE\", \"strategic miscalculation\"]"
+  },
+  {
+    "date":"2026-03-23",
+    "story_id":"story_1",
+    "slug":"us-section-301-india-trade-probes",
+    "title":"US Section 301 Probes Target India on Excess Capacity and Forced Labor",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Economy|IR|Trade Policy",
+    "keywords":"[\"Section 301\", \"trade surplus\", \"excess capacity\"]"
+  },
+  {
+    "date":"2026-03-23",
+    "story_id":"story_2",
+    "slug":"israel-iran-military-escalation-regional-destabilization",
+    "title":"Israel-Iran Military Escalation: 700+ Missile Targets Struck, Conflict Intensification Risk",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Security|Energy",
+    "keywords":"[\"Strait of Hormuz\", \"missile strikes\", \"escalation risk\"]"
+  },
+  {
+    "date":"2026-03-23",
+    "story_id":"story_3",
+    "slug":"navi-mumbai-airport-urban-governance",
+    "title":"Peak-Hour Mumbai Flights Shift to Navi Mumbai Airport: Urban Infrastructure Coordination Test",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Governance|Infrastructure",
+    "keywords":"[\"airport congestion\", \"urban aviation\", \"Centre-state\"]"
+  },
+  {
+    "date":"2026-03-23",
+    "story_id":"story_4",
+    "slug":"navic-atomic-clock-failure-space",
+    "title":"NavIC Atomic Clock Failure: India's Space Autonomy Vulnerability Exposed",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"S&T|Security|Space",
+    "keywords":"[\"NavIC\", \"atomic clock\", \"strategic autonomy\"]"
+  },
+  {
+    "date":"2026-03-23",
+    "story_id":"story_5",
+    "slug":"pinaka-mbrl-operationalization-defense",
+    "title":"Pinaka MBRL System Fully Operationalized: Indigenous Defense Milestone",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Security|S&T|Defense",
+    "keywords":"[\"Pinaka\", \"MBRL\", \"indigenous\"]"
+  },
+  {
+    "date":"2026-03-23",
+    "story_id":"story_6",
+    "slug":"sujal-gaon-id-jjm-accountability",
+    "title":"Sujal Gaon ID Scheme Under Jal Jeevan Mission: Coverage to Accountability Shift",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Governance|Environment|Water",
+    "keywords":"[\"JJM\", \"Sujal Gaon ID\", \"water quality\"]"
+  },
+  {
+    "date":"2026-03-24",
+    "story_id":"story_1",
+    "slug":"iran-missiles-strike-dimona-nuclear-site",
+    "title":"Iranian Missiles Penetrate Israel Defenses Near Dimona Nuclear Center",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Security|Non-Proliferation",
+    "keywords":"[\"Dimona\", \"Iron Dome failure\", \"ICBM Diego Garcia\"]"
+  },
+  {
+    "date":"2026-03-24",
+    "story_id":"story_2",
+    "slug":"trump-extends-iran-hormuz-deadline-power-grid-threat",
+    "title":"Trump Extends Hormuz Deadline, Threatens Iran Power Grid Strikes",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Economy|Energy Security",
+    "keywords":"[\"Strait of Hormuz\", \"force majeure\", \"power grid\"]"
+  },
+  {
+    "date":"2026-03-24",
+    "story_id":"story_3",
+    "slug":"trump-demands-iran-zero-enrichment-nuclear-talks",
+    "title":"Trump Insists Iran Surrender Enriched Uranium for Any Talks",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS2\"]",
+    "topic_cluster":"IR|Non-Proliferation",
+    "keywords":"[\"enriched uranium\", \"JCPOA\", \"zero enrichment\"]"
+  },
+  {
+    "date":"2026-03-24",
+    "story_id":"story_4",
+    "slug":"russia-backs-iran-strikes-on-israel-nuclear-site",
+    "title":"Russia Warns of 'Serious Consequences' After Iran Strikes Near Dimona",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS2\"]",
+    "topic_cluster":"IR|Security",
+    "keywords":"[\"Kremlin reaction\", \"intelligence sharing\", \"geopolitical axis\"]"
+  },
+  {
+    "date":"2026-03-25",
+    "story_id":"story_1",
+    "slug":"us-section-301-india-overcapacity-forced-labor",
+    "title":"US Section 301 Probes Target India on Overcapacity and Forced Labor",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Economy|IR|Trade Policy",
+    "keywords":"[\"Section 301\", \"overcapacity\", \"forced labor\"]"
+  },
+  {
+    "date":"2026-03-25",
+    "story_id":"story_2",
+    "slug":"navi-mumbai-airport-peak-flight-diversion",
+    "title":"Peak Mumbai Flights Diverted to Navi Mumbai Airport",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Governance|Infrastructure",
+    "keywords":"[\"AAI\", \"urban congestion\", \"federal coordination\"]"
+  },
+  {
+    "date":"2026-03-25",
+    "story_id":"story_3",
+    "slug":"navic-atomic-clock-failure",
+    "title":"NavIC Atomic Clock Failure Highlights Space Autonomy Gaps",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"S&T|Security|Space",
+    "keywords":"[\"NavIC\", \"rubidium clock\", \"hydrogen maser\"]"
+  },
+  {
+    "date":"2026-03-25",
+    "story_id":"story_4",
+    "slug":"pinaka-mbrl-full-operational",
+    "title":"Pinaka MBRL System Achieves Full Operational Status",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Security|S&T|Defense",
+    "keywords":"[\"Pinaka\", \"DRDO\", \"enhanced variant\"]"
+  },
+  {
+    "date":"2026-03-25",
+    "story_id":"story_5",
+    "slug":"sujal-gaon-id-jjm-outcomes",
+    "title":"Sujal Gaon ID Scheme Shifts JJM to Water Quality Accountability",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Governance|Environment|Water",
+    "keywords":"[\"JJM\", \"Sujal Gaon ID\", \"water quality\"]"
+  },
+  {
+    "date":"2026-03-25",
+    "story_id":"story_6",
+    "slug":"iran-strikes-dimona-nuclear-site",
+    "title":"Iran Missile Strikes Near Israel's Dimona Nuclear Site Wound 180+",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Security|Energy|Non-Proliferation",
+    "keywords":"[\"Dimona\", \"IAEA\", \"Hormuz\"]"
+  },
+  {
+    "date":"2026-03-26",
+    "story_id":"story_1",
+    "slug":"malaysia-voids-trump-trade-deal",
+    "title":"Malaysia Voids Trump Trade Deal as US Section 301 Probes Target India Amid IEEPA Ruling",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Economy|Trade Policy",
+    "keywords":"[\"Section 301\", \"IEEPA tariffs\", \"India trade deal\"]"
+  },
+  {
+    "date":"2026-03-27",
+    "story_id":"story_1",
+    "slug":"us-section-301-excess-capacity-india",
+    "title":"USTR Launches Section 301 Probe into India's Structural Excess Capacity in Key Sectors",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Economy|Trade Policy",
+    "keywords":"[\"Section 301\", \"excess capacity\", \"solar steel\"]"
+  },
+  {
+    "date":"2026-03-27",
+    "story_id":"story_2",
+    "slug":"us-section-301-forced-labor-india-probe",
+    "title":"USTR Initiates Section 301 Investigations into India's Forced Labor Enforcement Gaps",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\", \"GS4\"]",
+    "topic_cluster":"IR|Governance|Ethics",
+    "keywords":"[\"forced labor\", \"Section 301\", \"Article 23\"]"
+  },
+  {
+    "date":"2026-03-27",
+    "story_id":"story_3",
+    "slug":"malaysia-voids-us-trade-deal-ieepa",
+    "title":"Malaysia Voids US Trade Deal After IEEPA Court Ruling; India Delays $500B Pact",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Economy|Trade Policy",
+    "keywords":"[\"IEEPA\", \"trade deal\", \"Malaysia India\"]"
+  },
+  {
+    "date":"2026-03-28",
+    "story_id":"story_1",
+    "slug":"us-section-301-excess-capacity-india-probe",
+    "title":"US Section 301 Investigations Target India on Structural Excess Capacity in Key Sectors",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Economy|IR|Trade Policy",
+    "keywords":"[\"Section 301\", \"excess capacity\", \"solar steel\"]"
+  },
+  {
+    "date":"2026-03-28",
+    "story_id":"story_2",
+    "slug":"us-section-301-forced-labor-india-60-economies",
+    "title":"US Section 301 Probes India Among 60 Economies for Forced Labor Enforcement Failures",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\", \"GS4\"]",
+    "topic_cluster":"IR|Governance|Ethics|Trade Policy",
+    "keywords":"[\"forced labor\", \"Section 301\", \"supply chain\"]"
+  },
+  {
+    "date":"2026-03-28",
+    "story_id":"story_3",
+    "slug":"navic-clock-failure-autonomy-gap",
+    "title":"NavIC Atomic Clock Failure Exposes India's Space Autonomy Gaps",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"S&T|Security|Space",
+    "keywords":"[\"NavIC\", \"atomic clock\", \"autonomy\"]"
+  },
+  {
+    "date":"2026-03-28",
+    "story_id":"story_4",
+    "slug":"sujal-gaon-jjm-outcomes-shift",
+    "title":"Sujal Gaon ID Scheme Shifts JJM to Water Quality Outcomes",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Governance|Environment|Water",
+    "keywords":"[\"JJM\", \"Sujal Gaon\", \"water quality\"]"
+  },
+  {
+    "date":"2026-03-28",
+    "story_id":"story_5",
+    "slug":"pinaka-mbrl-full-operational",
+    "title":"Pinaka MBRL Achieves Full Operational Status at 75km Range",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Security|S&T|Defense",
+    "keywords":"[\"Pinaka\", \"MBRL\", \"75km\"]"
+  },
+  {
+    "date":"2026-03-29",
+    "story_id":"story_1",
+    "slug":"us-section-301-india-excess-capacity-forced-labor",
+    "title":"US Section 301 Probes Target India on Excess Capacity and Forced Labor Enforcement",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"IR|Economy|Trade Policy|Ethics",
+    "keywords":"[\"Section 301\", \"excess capacity\", \"forced labor\", \"USTR\"]"
+  },
+  {
+    "date":"2026-03-29",
+    "story_id":"story_2",
+    "slug":"pinaka-mbrl-full-operational-status",
+    "title":"Pinaka MBRL Achieves Full Operational Status at 75km Range",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Security|S&T|Defense",
+    "keywords":"[\"Pinaka\", \"MBRL\", \"Atmanirbhar Bharat\", \"DRDO\"]"
+  },
+  {
+    "date":"2026-03-29",
+    "story_id":"story_3",
+    "slug":"sujal-gaon-jjm-outcome-shift",
+    "title":"Sujal Gaon ID Scheme Enforces JJM Water Quality Outcomes",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Governance|Environment|Water Security",
+    "keywords":"[\"JJM\", \"Sujal Gaon\", \"water quality\", \"rural outcomes\"]"
+  },
+  {
+    "date":"2026-03-29",
+    "story_id":"story_4",
+    "slug":"navic-clock-failure-autonomy-gap",
+    "title":"NavIC Atomic Clock Failure Exposes Space Autonomy Gaps",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"S&T|Security|Space",
+    "keywords":"[\"NavIC\", \"atomic clock\", \"space autonomy\", \"ISRO\"]"
+  },
+  {
+    "date":"2026-03-29",
+    "story_id":"story_5",
+    "slug":"iran-dimona-strike-nuclear-risk",
+    "title":"Iran Strikes Near Dimona; IAEA Confirms No Nuclear Damage",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS2\"]",
+    "topic_cluster":"IR|Security|Non-Proliferation",
+    "keywords":"[\"Dimona\", \"IAEA\", \"Iran missiles\", \"Hormuz\"]"
+  },
+  {
+    "date":"2026-04-07",
+    "story_id":"story_4",
+    "slug":"cyber-resilience-critical-infrastructure",
+    "title":"India Unveils New Framework to Bolster Cyber Resilience of Critical Information Infrastructure",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\", \"GS2\"]",
+    "topic_cluster":"Security|S&T|Governance",
+    "keywords":"[\"cyber security\", \"critical infrastructure\", \"cyber resilience\", \"national security\", \"digital governance\"]"
+  },
+  {
+    "date":"2026-04-07",
+    "story_id":"story_3",
+    "slug":"nep-vocational-education-gaps",
+    "title":"Report Highlights Implementation Gaps in NEP 2020's Vocational Education Integration",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Society|Education|Governance",
+    "keywords":"[\"NEP 2020\", \"vocational education\", \"skill development\", \"education policy\", \"implementation challenges\"]"
+  },
+  {
+    "date":"2026-04-07",
+    "story_id":"story_2",
+    "slug":"isro-disaster-monitoring-satellite",
+    "title":"ISRO Launches Advanced Earth Observation Satellite for Enhanced Disaster Management",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\", \"GS1\"]",
+    "topic_cluster":"S&T|Security|Geography",
+    "keywords":"[\"ISRO\", \"Earth Observation Satellite\", \"disaster management\", \"Atmanirbhar Bharat\", \"space technology\"]"
+  },
+  {
+    "date":"2026-04-07",
+    "story_id":"story_1",
+    "slug":"green-hydrogen-mission-progress",
+    "title":"India's Green Hydrogen Mission: Progress and Challenges in Scaling Up Production",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\", \"GS2\"]",
+    "topic_cluster":"Environment|Economy|S&T",
+    "keywords":"[\"Green Hydrogen\", \"National Green Hydrogen Mission\", \"energy security\", \"decarbonization\", \"climate change\"]"
+  },
+  {
+    "date":"2026-04-08",
+    "story_id":"story_4",
+    "slug":"yuge-yugeen-bharat-museum",
+    "title":"World's Largest Museum, Yuge Yugeen Bharat, to Open First Gallery in New Delhi",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS1\", \"GS2\", \"Essay\"]",
+    "topic_cluster":"History|Culture",
+    "keywords":"[\"Yuge Yugeen Bharat Museum\", \"Cultural Heritage\", \"Central Vista\", \"Archaeology\", \"Museum Development\"]"
+  },
+  {
+    "date":"2026-04-08",
+    "story_id":"story_3",
+    "slug":"india-multi-hazard-early-warning-system",
+    "title":"India Bolsters Disaster Preparedness with Multi-Hazard Early Warning System",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS1\", \"GS2\", \"GS3\"]",
+    "topic_cluster":"Disaster Management",
+    "keywords":"[\"Early Warning Systems\", \"Disaster Risk Reduction\", \"Climate Resilience\", \"IMD\", \"GIS\"]"
+  },
+  {
+    "date":"2026-04-08",
+    "story_id":"story_2",
+    "slug":"india-digital-health-ai",
+    "title":"India Advances Digital Health and AI Integration in Healthcare Sector",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Health|Epidemics",
+    "keywords":"[\"Digital Health\", \"AI in Healthcare\", \"Ayushman Bharat Digital Mission\", \"Public Health\", \"Medical Tourism\"]"
+  },
+  {
+    "date":"2026-04-06",
+    "story_id":"story_2",
+    "slug":"unified-digital-identity-framework",
+    "title":"India Explores Unified Digital Identity Framework Beyond Aadhaar",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Digital|Cyber",
+    "keywords":"[\"digital identity\", \"Aadhaar\", \"data privacy\", \"India Stack\", \"digital governance\", \"cybersecurity\"]"
+  },
+  {
+    "date":"2026-04-06",
+    "story_id":"story_3",
+    "slug":"india-offshore-wind-energy",
+    "title":"India Accelerates Offshore Wind Energy Development to Meet Climate Goals",
+    "priority":"MEDIUM",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Energy|Climate",
+    "keywords":"[\"offshore wind\", \"renewable energy\", \"climate change\", \"energy security\", \"NDC targets\", \"green energy\"]"
+  },
+  {
+    "date":"2026-04-06",
+    "story_id":"story_4",
+    "slug":"pm-janman-pvtgs",
+    "title":"PM-JANMAN Mission: A Focused Push for Particularly Vulnerable Tribal Groups",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS1\", \"GS2\"]",
+    "topic_cluster":"Tribal|Welfare",
+    "keywords":"[\"PM-JANMAN\", \"PVTGs\", \"tribal welfare\", \"social justice\", \"inclusive development\", \"Forest Rights Act\"]"
+  },
+  {
+    "date":"2026-04-08",
+    "story_id":"story_1",
+    "slug":"india-new-labour-codes",
+    "title":"India's New Labour Codes Streamline Compliance, Enhance Social Security",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS2\", \"GS3\"]",
+    "topic_cluster":"Labour|Employment",
+    "keywords":"[\"Labour Codes\", \"Social Security\", \"Gig Economy\", \"Ease of Doing Business\", \"Wage Reforms\"]"
+  },
+  {
+    "date":"2026-04-06",
+    "story_id":"story_1",
+    "slug":"private-sector-space-economy",
+    "title":"India's Space Sector Opens Up: Private Players Drive New Era of Growth",
+    "priority":"HIGH",
+    "gs_papers":"[\"GS3\"]",
+    "topic_cluster":"Space|ISRO",
+    "keywords":"[\"space economy\", \"private sector\", \"ISRO\", \"Indian Space Policy 2023\", \"IN-SPACe\", \"NSIL\"]"
+  }
+]
