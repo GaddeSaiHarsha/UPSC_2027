@@ -837,6 +837,118 @@ async def generate_quiz_with_key(topic: str, mem: str, concept_hint: str = "") -
 
 
 # ================================================================
+# DRILL GENERATION WITH HIDDEN ANSWER KEYS (3 MCQs)
+# ================================================================
+
+def build_drill_prompt() -> str:
+    return (
+        "Generate THREE UPSC-style Prelims MCQs from 3 DIFFERENT subjects as an interleaved drill.\n\n"
+        "Rules:\n"
+        "1. Each question from a different GS area or Optional.\n"
+        "2. Must be realistic UPSC style: relationship, exception, subtle flaw, conceptual distinction.\n"
+        "3. Include one tempting wrong option per question.\n"
+        "4. Do NOT reveal answers in the public section.\n"
+        "5. Number questions 1, 2, 3.\n\n"
+        "Output EXACTLY in this format:\n\n"
+        "[USER]\n"
+        "Q1: [full question]\n"
+        "(A) ...\n(B) ...\n(C) ...\n(D) ...\n\n"
+        "Q2: [full question]\n"
+        "(A) ...\n(B) ...\n(C) ...\n(D) ...\n\n"
+        "Q3: [full question]\n"
+        "(A) ...\n(B) ...\n(C) ...\n(D) ...\n\n"
+        "Reply with answers for all 3 questions, e.g. 1-B 2-D 3-A\n"
+        "[/USER]\n\n"
+        "[KEY]\n"
+        "[{\"qno\":1,\"topic\":\"...\",\"concept\":\"...\",\"correct_option\":\"A/B/C/D\","
+        "\"explanation\":\"2-4 lines\",\"trap\":\"1-3 lines\",\"rule\":\"one memory rule\"},"
+        "{\"qno\":2,\"topic\":\"...\",\"concept\":\"...\",\"correct_option\":\"A/B/C/D\","
+        "\"explanation\":\"2-4 lines\",\"trap\":\"1-3 lines\",\"rule\":\"one memory rule\"},"
+        "{\"qno\":3,\"topic\":\"...\",\"concept\":\"...\",\"correct_option\":\"A/B/C/D\","
+        "\"explanation\":\"2-4 lines\",\"trap\":\"1-3 lines\",\"rule\":\"one memory rule\"}]\n"
+        "[/KEY]\n\n"
+        "The [KEY] block must be a valid JSON array of exactly 3 objects."
+    )
+
+
+def parse_drill_payload(raw_text: str) -> tuple[str, list[dict]]:
+    user_block = extract_tagged_block(raw_text, "USER")
+    key_block = extract_tagged_block(raw_text, "KEY")
+
+    if not user_block:
+        raise ValueError("Missing [USER] block in drill payload")
+    if not key_block:
+        raise ValueError("Missing [KEY] block in drill payload")
+
+    try:
+        keys = json.loads(key_block)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid drill KEY JSON: {e}")
+
+    if not isinstance(keys, list) or len(keys) != 3:
+        raise ValueError(f"Expected 3 drill keys, got {type(keys).__name__}({len(keys) if isinstance(keys, list) else ''})")
+
+    required = ["qno", "topic", "concept", "correct_option", "explanation", "trap", "rule"]
+    for i, k in enumerate(keys):
+        missing = [f for f in required if f not in k]
+        if missing:
+            raise ValueError(f"Drill key {i+1} missing fields: {missing}")
+        k["correct_option"] = str(k["correct_option"]).strip().upper()
+        if k["correct_option"] not in {"A", "B", "C", "D"}:
+            raise ValueError(f"Drill key {i+1}: correct_option must be A/B/C/D")
+        k["qno"] = int(k["qno"])
+
+    return user_block, keys
+
+
+async def generate_drill_with_keys(mem: str) -> tuple[str, list[dict], int, int]:
+    prompt = build_drill_prompt()
+    raw_resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+
+    public_text, keys = parse_drill_payload(raw_resp)
+    return public_text, keys, tok, lat
+
+
+def parse_drill_answers(text: str) -> dict[int, str]:
+    """
+    Parse user drill answers. Supports:
+      - '1-B 2-D 3-A'
+      - 'B D A'
+      - '1) B, 2) D, 3) A'
+    Returns: {1: 'B', 2: 'D', 3: 'A'}
+    """
+    text = text.strip().upper()
+    answers = {}
+
+    # Pattern 1: numbered like '1-B' or '1)B' or '1) B' or '1.B'
+    numbered = re.findall(r'(\d)\s*[\-\)\.\:]\s*([ABCD])', text)
+    if numbered:
+        for qno, opt in numbered:
+            answers[int(qno)] = opt
+        return answers
+
+    # Pattern 2: bare letters like 'B D A' or 'B, D, A'
+    bare = re.findall(r'\b([ABCD])\b', text)
+    if len(bare) == 3:
+        for i, opt in enumerate(bare, 1):
+            answers[i] = opt
+        return answers
+
+    return answers
+
+
+def render_single_drill_result(qkey: dict, user_answer: str, is_correct: bool) -> str:
+    verdict = "✅" if is_correct else "❌"
+    lines = [
+        f"{verdict} Q{qkey['qno']}: Your answer: {user_answer} | Correct: {qkey['correct_option']}",
+        f"WHY: {str(qkey.get('explanation', '')).strip()}",
+        f"TRAP: {str(qkey.get('trap', '')).strip()}",
+        f"RULE: {str(qkey.get('rule', '')).strip()}",
+    ]
+    return "\n".join(lines)
+
+
+# ================================================================
 # SECTION 1 — CORE COMMANDS
 # ================================================================
 
@@ -1107,19 +1219,29 @@ async def cmd_trap(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_drill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not check_auth(update): return
+    if not check_auth(update):
+        return
+
     await thinking(update, "🌪️ Interleaved Drill...")
-    prompt = (
-        "INTERLEAVED DRILL — mix 3 questions from 3 different subjects from my weak list.\n"
-        "Make them rapid-fire. Each from a different GS area.\n"
-        "Include one from Telugu Optional.\n"
-        "Do NOT reveal answers. Number them 1, 2, 3.\n"
-        "After I answer all three, grade each and explain."
-    )
     mem = get_memory_context()
-    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
-    log_hermes("/drill", "interleaved", resp, tok, lat)
-    await send_long(update, resp)
+
+    try:
+        public_text, keys, tok, lat = await generate_drill_with_keys(mem)
+    except Exception as e:
+        log.error(f"/drill parse failure: {e}")
+        await update.message.reply_text("⚠️ Drill generation failed. Try /drill again.")
+        return
+
+    log_hermes("/drill", "interleaved", public_text, tok, lat)
+
+    set_session(ctx, "drill", {
+        "questions_text": public_text,
+        "drill_keys": keys,
+        "attempts": 0,
+        "started_at": datetime.utcnow().isoformat()
+    })
+
+    await send_long(update, public_text)
 
 
 async def cmd_pyq(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2236,6 +2358,112 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         touch_session(ctx)
 
         await send_long(update, feedback + "\n\nFOLLOW-UP:\n" + followup_public)
+        return
+
+    # ============================================================
+    # DRILL SESSION CONTINUATION (DETERMINISTIC)
+    # ============================================================
+    if session and session.get("mode") == "drill":
+        await thinking(update, "🧠 Grading drill...")
+
+        answers = parse_drill_answers(user_msg)
+        if set(answers.keys()) != {1, 2, 3}:
+            await update.message.reply_text(
+                "Reply with all 3 answers in one line.\n"
+                "Examples:\n"
+                "1-B 2-D 3-A\n"
+                "B D A\n"
+                "1) B, 2) D, 3) A"
+            )
+            return
+
+        drill_keys = session["data"].get("drill_keys", [])
+        session["data"]["attempts"] = int(session["data"].get("attempts", 0)) + 1
+        touch_session(ctx)
+
+        total_correct = 0
+        result_blocks = []
+        incorrect_concepts = []
+
+        for qkey in drill_keys:
+            qno = qkey["qno"]
+            user_answer = answers.get(qno, "?")
+            correct_option = qkey["correct_option"]
+            is_correct = (user_answer == correct_option)
+
+            if is_correct:
+                total_correct += 1
+            else:
+                incorrect_concepts.append({
+                    "topic": qkey.get("topic", "Prelims"),
+                    "concept": qkey.get("concept", qkey.get("topic", "General"))
+                })
+                log_weakness("Prelims", qkey.get("concept", qkey.get("topic", "General")), "drill")
+
+            _db_exec(
+                "INSERT INTO quiz_history(subject,question,user_answer,was_correct,score,topic) "
+                "VALUES(?,?,?,?,?,?)",
+                (
+                    qkey.get("topic", "Prelims"),
+                    f"Drill Q{qno}: {session['data'].get('questions_text', '')[:900]}",
+                    user_answer,
+                    1 if is_correct else 0,
+                    1.0 if is_correct else 0.0,
+                    qkey.get("concept", qkey.get("topic", "General"))
+                )
+            )
+
+            result_blocks.append(render_single_drill_result(qkey, user_answer, is_correct))
+
+        weakest_concept = None
+        if incorrect_concepts:
+            weakest_concept = incorrect_concepts[0]["concept"]
+
+        summary = (
+            f"🌪️ DRILL RESULT\n{DIVIDER}\n"
+            f"Score: {total_correct}/3\n\n"
+            + "\n\n".join(result_blocks)
+        )
+
+        if weakest_concept:
+            summary += (
+                f"\n\nWEAKEST CONCEPT TO REVISE NEXT:\n"
+                f"{weakest_concept}"
+            )
+
+            # Follow-up: auto-switch into quiz mode on weakest concept
+            mem = get_memory_context()
+            try:
+                followup_public, followup_key, tok, lat = await generate_quiz_with_key(
+                    "Prelims",
+                    mem,
+                    concept_hint=weakest_concept
+                )
+                log_hermes("drill_followup", weakest_concept, followup_public, tok, lat)
+
+                set_session(ctx, "quiz", {
+                    "topic": followup_key.get("topic", "Prelims"),
+                    "concept": followup_key.get("concept", weakest_concept),
+                    "question_text": followup_public,
+                    "answer_key": followup_key,
+                    "attempts": 0,
+                    "started_at": datetime.utcnow().isoformat()
+                })
+
+                await send_long(
+                    update,
+                    summary + "\n\nFOLLOW-UP MCQ ON YOUR WEAKEST CONCEPT:\n" + followup_public
+                )
+                return
+
+            except Exception as e:
+                log.error(f"Drill follow-up quiz generation failed: {e}")
+                clear_session(ctx)
+                await send_long(update, summary + "\n\n⚠️ Follow-up generation failed. Start again with /quiz or /drill.")
+                return
+
+        clear_session(ctx)
+        await send_long(update, summary + "\n\n✅ Drill session complete.")
         return
 
     # ============================================================
