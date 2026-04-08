@@ -1,39 +1,77 @@
 # Databricks notebook source
 # DBTITLE 1,NB6 CA Orchestrator — Header
 # MAGIC %md
-# MAGIC # NB6: Current Affairs Orchestrator Pipeline v3.3
-# MAGIC ### Gemini 2.5 Flash → Two-Pass Analysis → Delta → RAG Pipeline → FAISS → Obsidian
-# MAGIC
-# MAGIC **v3.3 Changes (2026-04-05): Switched from Perplexity sonar-pro to Google AI Gemini 2.5 Flash**
-# MAGIC - **API**: Now uses `generativelanguage.googleapis.com` (API key auth) with `google_search` grounding tool
-# MAGIC - **Cost**: Uses $400 Google AI credit balance instead of Perplexity ($0.01-0.03/day → ~$0/day with credits)
-# MAGIC - **Thinking**: Gemini 2.5 Flash uses thinking tokens from output budget; `maxOutputTokens=65536` gives headroom
-# MAGIC - **Fallback chain**: gemini-2.5-flash → gemini-2.5-flash-lite → gemini-1.5-flash
+# MAGIC # NB6: Current Affairs Orchestrator Pipeline v3.2
+# MAGIC ### Perplexity sonar-pro → Two-Pass Analysis → Delta → RAG Pipeline → FAISS → Obsidian
 # MAGIC
 # MAGIC **v3.2 Changes (2026-04-04): Inclusion-Based Steering + Cluster Diversity Fix**
-# MAGIC - **Fix 1 — DO-Cover-Y Prompt**: Replaced "DON'T cover X" with "DO cover Y". Steers toward under-covered GS areas.
-# MAGIC - **Fix 2 — Topic-Cluster Grouping**: Groups by `topic_cluster` + keyword-set overlap (>40%).
-# MAGIC - **Fix 3 — Cluster Diversity Enforcement**: Unique `topic_cluster` per story per day.
-# MAGIC - **Fix 4 — Keyword-Set Dedup**: Three-check pipeline: cluster diversity → keyword overlap → title-keyword cross-check.
-# MAGIC - **Fix 5 — MERGE Key Fix**: Stories MERGE on `(date, slug)` with UPSERT.
+# MAGIC - **Root Cause**: v3.1's "ABSOLUTE PROHIBITION" approach failed because (a) word-overlap grouping was too fragile, (b) LLMs ignore exclusion lists, (c) `search_recency_filter=day` always returns trending topics.
+# MAGIC - **Fix 1 — DO-Cover-Y Prompt**: Replaced "DON'T cover X" with "DO cover Y". Prompt now leads with PRIORITY AREAS (under-covered GS topics) to steer Perplexity toward fresh domains.
+# MAGIC - **Fix 2 — Topic-Cluster Grouping**: Memory injection now groups by `topic_cluster` field + keyword-set overlap (>40%) instead of fragile 40%-word-overlap on first-6-title-words.
+# MAGIC - **Fix 3 — Cluster Diversity Enforcement**: System prompt and post-fetch dedup both enforce unique `topic_cluster` per story per day. No two stories can share the same cluster.
+# MAGIC - **Fix 4 — Keyword-Set Dedup**: Post-fetch dedup now uses story's `keywords` JSON array (not title words) for overlap scoring. Three-check pipeline: cluster diversity → keyword overlap → title-keyword cross-check.
+# MAGIC - **Fix 5 — MERGE Key Fix**: Stories MERGE changed from `(date, story_id)` to `(date, slug)` with UPSERT. Prevents duplicate story_1 entries on re-runs.
+# MAGIC
+# MAGIC **v3.1 Changes (2026-03-30): 3-Layer Deduplication Fix** *(superseded by v3.2)*
+# MAGIC - ~~Layer 1 — Topic-Grouped Memory Injection~~
+# MAGIC - ~~Layer 2 — Prompt Hard-Block Language~~
+# MAGIC - ~~Layer 3 — Post-Fetch Python Dedup~~
 # MAGIC
 # MAGIC **Pipeline Steps (end-to-end):**
 # MAGIC 1. **Memory Injection** — Reads recent stories, groups by topic_cluster+keywords, builds BLOCK list + SUGGESTED AREAS
-# MAGIC 2. **Pass 1: Broad Fetch** — Gemini 2.5 Flash with Google Search grounding fetches 3–5 DIVERSE CA stories
-# MAGIC 3. **Post-Fetch Dedup** — 3-check pipeline: cluster diversity → keyword-set overlap → title-keyword cross-check
+# MAGIC 2. **Pass 1: Broad Fetch** — Perplexity `sonar-pro` fetches 3–5 DIVERSE CA stories (`recency=day`), steered toward under-covered areas
+# MAGIC 3. **Post-Fetch Dedup** — 3-check pipeline: cluster diversity → keyword-set overlap → title-keyword cross-check (fallback to `week` if <2 survive)
 # MAGIC 4. **Dual-Output Parse** — Splits response into human brief + structured JSON (schema v1.0.0)
 # MAGIC 5. **Delta Writes** — `ca_runs`, `stories` (UPSERT on date+slug), `story_traps` tables with MERGE idempotency
-# MAGIC 6. **Pass 2: Deep Analysis** — Top 3 stories → Gemini (no search) for PYQ patterns, prelims traps, mains skeletons, textbook links
+# MAGIC 6. **Pass 2: Deep Analysis** — Top 3 stories → sonar-pro again for PYQ patterns, prelims traps, mains skeletons, textbook links
 # MAGIC 7. **Geography Enrichment** — Auto-detects geo stories → map locations, strategic importance
 # MAGIC 8. **RAG Ingest** — Creates contextual chunks and MERGEs into `contextual_chunks`
-# MAGIC 9. **Embedding** — Calls `databricks-bge-large-en` for new CA chunks
+# MAGIC 9. **Embedding** — Calls `databricks-qwen3-embedding-0-6b` for new CA chunks
 # MAGIC 10. ~~**VS Index Sync**~~ — *DEPRECATED 2026-03-23: replaced by FAISS rebuild in Step 10*
-# MAGIC 11. **FAISS Rebuild** — Rebuilds `IndexFlatIP` from ALL embedded_chunks → Volume
+# MAGIC 11. **FAISS Rebuild** — Rebuilds `IndexFlatIP` from ALL 80,808 embedded_chunks → Volume
 # MAGIC 12. **Obsidian Export** — Enhanced markdown with Deep Analysis + Geography callouts + PYQ Match
 # MAGIC
 # MAGIC **Schedule:** Daily at 7 AM IST via [UPSC Daily CA Orchestrator](#job-1121120519823159)
 # MAGIC
-# MAGIC **Cost:** \~$0/day with Google AI credits ($400 balance); Gemini 2.5 Flash + BGE embeddings
+# MAGIC **Cost:** \~$0.01–0.03/day (3–4 sonar-pro calls + Qwen3 embeddings)
+
+# COMMAND ----------
+
+# DBTITLE 1,NB6 CA Orchestrator — Header
+# MAGIC %md
+# MAGIC # NB6: Current Affairs Orchestrator Pipeline v3.2
+# MAGIC ### Perplexity sonar-pro → Two-Pass Analysis → Delta → RAG Pipeline → FAISS → Obsidian
+# MAGIC
+# MAGIC **v3.2 Changes (2026-04-04): Inclusion-Based Steering + Cluster Diversity Fix**
+# MAGIC - **Root Cause**: v3.1's "ABSOLUTE PROHIBITION" approach failed because (a) word-overlap grouping was too fragile, (b) LLMs ignore exclusion lists, (c) `search_recency_filter=day` always returns trending topics.
+# MAGIC - **Fix 1 — DO-Cover-Y Prompt**: Replaced "DON'T cover X" with "DO cover Y". Prompt now leads with PRIORITY AREAS (under-covered GS topics) to steer Perplexity toward fresh domains.
+# MAGIC - **Fix 2 — Topic-Cluster Grouping**: Memory injection now groups by `topic_cluster` field + keyword-set overlap (>40%) instead of fragile 40%-word-overlap on first-6-title-words.
+# MAGIC - **Fix 3 — Cluster Diversity Enforcement**: System prompt and post-fetch dedup both enforce unique `topic_cluster` per story per day. No two stories can share the same cluster.
+# MAGIC - **Fix 4 — Keyword-Set Dedup**: Post-fetch dedup now uses story's `keywords` JSON array (not title words) for overlap scoring. Three-check pipeline: cluster diversity → keyword overlap → title-keyword cross-check.
+# MAGIC - **Fix 5 — MERGE Key Fix**: Stories MERGE changed from `(date, story_id)` to `(date, slug)` with UPSERT. Prevents duplicate story_1 entries on re-runs.
+# MAGIC
+# MAGIC **v3.1 Changes (2026-03-30): 3-Layer Deduplication Fix** *(superseded by v3.2)*
+# MAGIC - ~~Layer 1 — Topic-Grouped Memory Injection~~
+# MAGIC - ~~Layer 2 — Prompt Hard-Block Language~~
+# MAGIC - ~~Layer 3 — Post-Fetch Python Dedup~~
+# MAGIC
+# MAGIC **Pipeline Steps (end-to-end):**
+# MAGIC 1. **Memory Injection** — Reads recent stories, groups by topic_cluster+keywords, builds BLOCK list + SUGGESTED AREAS
+# MAGIC 2. **Pass 1: Broad Fetch** — Perplexity `sonar-pro` fetches 3–5 DIVERSE CA stories (`recency=day`), steered toward under-covered areas
+# MAGIC 3. **Post-Fetch Dedup** — 3-check pipeline: cluster diversity → keyword-set overlap → title-keyword cross-check (fallback to `week` if <2 survive)
+# MAGIC 4. **Dual-Output Parse** — Splits response into human brief + structured JSON (schema v1.0.0)
+# MAGIC 5. **Delta Writes** — `ca_runs`, `stories` (UPSERT on date+slug), `story_traps` tables with MERGE idempotency
+# MAGIC 6. **Pass 2: Deep Analysis** — Top 3 stories → sonar-pro again for PYQ patterns, prelims traps, mains skeletons, textbook links
+# MAGIC 7. **Geography Enrichment** — Auto-detects geo stories → map locations, strategic importance
+# MAGIC 8. **RAG Ingest** — Creates contextual chunks and MERGEs into `contextual_chunks`
+# MAGIC 9. **Embedding** — Calls `databricks-qwen3-embedding-0-6b` for new CA chunks
+# MAGIC 10. ~~**VS Index Sync**~~ — *DEPRECATED 2026-03-23: replaced by FAISS rebuild in Step 10*
+# MAGIC 11. **FAISS Rebuild** — Rebuilds `IndexFlatIP` from ALL 80,808 embedded_chunks → Volume
+# MAGIC 12. **Obsidian Export** — Enhanced markdown with Deep Analysis + Geography callouts + PYQ Match
+# MAGIC
+# MAGIC **Schedule:** Daily at 7 AM IST via [UPSC Daily CA Orchestrator](#job-1121120519823159)
+# MAGIC
+# MAGIC **Cost:** \~$0.01–0.03/day (3–4 sonar-pro calls + Qwen3 embeddings)
 
 # COMMAND ----------
 
@@ -44,10 +82,30 @@ from datetime import date, timedelta, datetime, timezone
 from pyspark.sql import functions as F, Row
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType, ArrayType, FloatType
 
-# -- Gemini API Key (loaded in Step 2 via _get_gemini_api_key()) --
-# Perplexity sonar-pro was dropped in v3.3 (2026-04-05) in favour of Gemini 2.5 Flash
-# with Google Search grounding. $400 Google AI credit balance covers daily runs at ~$0.
-# Key sources: widget 'gemini_api_key' → Secrets 'upsc-bot-secrets/google-ai-api-key'
+# -- Perplexity API Key (widget first, then Secrets fallback) --
+# Widget key takes priority so you can paste a fresh key without updating Secrets
+PERPLEXITY_API_KEY = ""
+try:
+    _widget_key = dbutils.widgets.get("perplexity_api_key")
+    if _widget_key and _widget_key.startswith("pplx-"):
+        PERPLEXITY_API_KEY = _widget_key
+        print("\u2705 Perplexity API key loaded from widget")
+except Exception:
+    pass
+
+if not PERPLEXITY_API_KEY:
+    try:
+        PERPLEXITY_API_KEY = dbutils.secrets.get("azure-ocr", "perplexity-api-key")
+        print("\u2705 Perplexity API key loaded from Databricks Secrets")
+    except Exception:
+        pass
+
+if not PERPLEXITY_API_KEY:
+    print("\u26a0\ufe0f  Perplexity API key not found!")
+    print("   Option 1: Paste your key into the 'perplexity_api_key' widget at the top of this notebook")
+    print("   Option 2: Add to Secrets (for scheduled runs):")
+    print('            databricks secrets put-secret azure-ocr perplexity-api-key --string-value "pplx-xxxx"')
+    print("\n   Get your key: https://www.perplexity.ai/settings/api")
 
 # Catalog / Schema (matches RAG Pipeline NB1-3)
 CATALOG         = "upsc_catalog"
@@ -92,7 +150,7 @@ print(f"   FAISS Index: {FAISS_INDEX_PATH}")
 # MAGIC CREATE TABLE IF NOT EXISTS upsc_catalog.rag.ca_runs (
 # MAGIC   run_date        STRING     COMMENT 'ISO date of the CA run',
 # MAGIC   generated_at    STRING     COMMENT 'UTC timestamp of generation',
-# MAGIC   raw_output      STRING     COMMENT 'Full LLM response text (Gemini/Perplexity)',
+# MAGIC   raw_output      STRING     COMMENT 'Full Perplexity response text',
 # MAGIC   parsed_json     STRING     COMMENT 'Extracted JSON block as string',
 # MAGIC   story_count     INT        COMMENT 'Number of stories extracted',
 # MAGIC   schema_version  STRING     COMMENT 'Dual-output contract version'
@@ -524,7 +582,7 @@ print(f"\u2705 Next trap ID: T{next_trap_num:03d}")
 
 # COMMAND ----------
 
-# DBTITLE 1,Step 2: Call Gemini API (2.5 Flash with Google Search grounding)
+# DBTITLE 1,Step 2: Call Perplexity API (sonar-pro with web search)
 # ======================================================================
 # STEP 2: GEMINI API CALL (v3.9 -- maxOutputTokens 65536 for thinking headroom)
 # Uses Gemini 2.5 Flash via generativelanguage.googleapis.com
@@ -1272,7 +1330,7 @@ print("   Rebuilt daily at ~7:05 AM IST after CA embeddings are merged")
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 7: OBSIDIAN NOTE GENERATION (v3.1 -- Fixed JSON parsing)
 # FIX: isinstance guards on pyq_data, traps_data, mains_data, static_data
-#      LLMs sometimes return lists of strings instead of dicts
+#      Perplexity sometimes returns lists of strings instead of dicts
 # ══════════════════════════════════════════════════════════════════════════
 from datetime import date as _date
 import os as _os
