@@ -30,8 +30,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 
 import requests, json, base64, os, time
-import hashlib as _hashlib
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 # ── Configuration ──────────────────────────────────────────────────────────
 TODAY = date.today().isoformat()
@@ -294,41 +293,16 @@ else:
 
     # ── 2. Push critical table data as JSON ───────────────────────────
     # Only push small critical tables to GitHub (large ones stay in Volume)
-    # OPTIMIZATION (v2.1): Skip tables whose content hasn't changed since
-    # last push. mastery_tracker was 83KB of identical data every day.
-    # Diff check: compare md5 hash of new JSON against previous day's snapshot.
     CRITICAL_TABLES = ["mastery_tracker", "stories", "story_traps",
                        "daily_practice_queue", "ca_runs"]
 
-    def _get_prev_snapshot_hash(table_name):
-        """Get md5 hash of yesterday's snapshot for diff-based skip."""
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
-        prev_path = f"data_snapshots/{yesterday}/{table_name}.json"
-        try:
-            r = gh_api("get", prev_path)
-            if r.status_code == 200:
-                content = base64.b64decode(r.json().get("content", ""))
-                return _hashlib.md5(content).hexdigest()
-        except Exception:
-            pass
-        return None
-
     print(f"\n📊 Pushing critical table snapshots:")
-    skipped_unchanged = 0
     for table_name in CRITICAL_TABLES:
         try:
             df = spark.table(f"upsc_catalog.rag.{table_name}")
             rows = df.limit(5000).toPandas()  # Cap at 5K rows for GitHub
             json_str = rows.to_json(orient='records', indent=2, default_handler=str)
             content_bytes = json_str.encode('utf-8')
-
-            # Diff check: skip if content identical to yesterday's snapshot
-            new_hash = _hashlib.md5(content_bytes).hexdigest()
-            prev_hash = _get_prev_snapshot_hash(table_name)
-            if prev_hash and new_hash == prev_hash:
-                skipped_unchanged += 1
-                print(f"   ⏭️  {table_name:<45} unchanged — skipped")
-                continue
 
             gh_path = f"data_snapshots/{TODAY}/{table_name}.json"
             ok, status = gh_push_file(gh_path, content_bytes, commit_msg)
@@ -359,8 +333,6 @@ else:
     ok_count = sum(1 for _, ok, _ in push_results if ok)
     print(f"\n{'='*60}")
     print(f"   Pushed: {ok_count}/{len(push_results)} files to GitHub")
-    if skipped_unchanged > 0:
-        print(f"   Skipped: {skipped_unchanged} unchanged table snapshots (diff-based)")
     print(f"   Repo: https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}")
 
 # COMMAND ----------
