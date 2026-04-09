@@ -1,13 +1,129 @@
 # UPSC_2027 — Complete Deployment Guide
-## PR #3 Merged Successfully ✅ — Changes Ready for Databricks
+## Hermes V1.8: Stateful `/recall` and `/progress` ✅
 
-> **Date:** 2026-04-07
+> **Date:** 2026-04-09
+> **Branch:** `copilot/update-documentation-for-project`
+> **Status:** Ready to deploy — `hermes_full.py` updated
+
+---
+
+## 📋 SUMMARY OF CHANGES (V1.8)
+
+### `bot_code/hermes_full.py` — Stateful `/recall` and `/progress`
+
+**What changed:**
+- `/recall <topic>` is now a **stateful 2-phase active recall loop**
+  - Phase 1 (dump): Bot asks "write everything you know" — hidden `[KEY]` has 5 expected points + traps
+  - User answers → graded (hits/misses/confidence gap/score) → targeted follow-up question on biggest gap
+  - Phase 2 (followup): User answers follow-up → final score + revision tip → session clears
+  - Session mode: `recall` | Phases: `dump` → `followup`
+- `/progress <topic>` is now a **stateful Bloom's Taxonomy Levels 1-5 drill**
+  - Level 1 (RECALL) → Level 2 (UNDERSTAND) → Level 3 (APPLY) → Level 4 (ANALYSE) → Level 5 (EVALUATE)
+  - Each level generated with hidden `[KEY]` (key_points + pass_threshold)
+  - Score ≥ threshold (default 6/10) → **PASS**, advance to next level
+  - Score < threshold → **RETRY** (max 2 retries per level, then forced advance)
+  - After Level 5: full journey summary `L1(8) → L2(7) → L3(9) → L4(7) → L5(8)` → session clears
+  - Session mode: `progress`
+- New helper functions:
+  - `build_recall_question_prompt()` / `parse_recall_payload()` / `generate_recall_question()`
+  - `build_recall_eval_prompt()` — grades brain dump, surfaces targeted follow-up
+  - `build_progress_question_prompt()` / `parse_progress_payload()` / `generate_progress_question()`
+  - `build_progress_eval_prompt()` — scores Bloom's level answer, emits VERDICT: PASS/RETRY
+  - `_BLOOM_LEVEL_NAMES` / `_BLOOM_LEVEL_DESCS` — level metadata dicts
+  - `build_interview_eval_prompt()` — per-question evaluation
+
+**No other commands changed.**
+
+---
+
+## 🔧 DEPLOY STEPS
+
+No Databricks changes required. Only `bot_code/hermes_full.py` changed.
+
+On your Azure VM running Hermes:
+
+```bash
+# 1. Pull latest
+cd ~/bots
+git pull origin main
+
+# 2. Restart Hermes (new DB table created automatically on startup)
+sudo systemctl restart hermes-bot
+
+# 3. Verify startup
+sudo journalctl -u hermes-bot -n 30 --no-pager
+# Should see: "Hermes DB ready" and "15 tables" (new: interview_history)
+```
+
+**Smoke test:**
+```
+/daf                         → board question appears (auto-angle)
+/daf tech                    → board question, tech angle
+<type answer>                → evaluation + Round 2 question appears
+<type answer>                → evaluation + Round 3 question appears
+<type answer>                → Round 3 evaluation + cumulative scores + session clears
+
+/mock_iq                     → Q1 (Chairman) appears
+<type answer>                → Q1 evaluation + Q2 (Senior IAS) appears
+...                          → continues through Q5
+<type answer for Q5>         → Q5 evaluation + final panel summary + session clears
+
+/cancel                      → clears any running session mid-way
+```
+
+---
+
+## Hermes Stateful Command Summary (as of V1.8)
+
+| Command | Mode | Rounds | Auto-advance |
+|---------|------|--------|--------------|
+| `/quiz [topic]` | `quiz` | Infinite follow-up | Same concept follow-up MCQ |
+| `/drill` | `drill` | 1 (3 MCQs) | Auto-cascade to weakest concept quiz |
+| `/socratic [topic]` | `socratic` | Up to 4 depths | Deeper/simpler follow-up → conclusion |
+| `/daf [angle]` | `daf` | 3 rounds | Next angle from `follow_up_angles` key |
+| `/mock_iq` | `mock_iq` | 5 questions | Sequential Q1→Q5 with per-question grading |
+| `/recall <topic>` | `recall` | 2 phases | Phase 1: dump → eval+follow-up → Phase 2: final |
+| `/progress <topic>` | `progress` | Up to 5 levels | PASS→advance, RETRY (max 2)→forced advance |
+
+### Smoke Tests — `/recall`
+```
+1. /recall Article 356
+2. [Type a 3-sentence brain dump]
+   → Expect: hits/misses breakdown, SCORE: X/10, follow-up question
+3. [Answer the follow-up]
+   → Expect: FINAL SCORE: X/10, revision tip, "Session complete."
+```
+
+### Smoke Tests — `/progress`
+```
+1. /progress Preamble of the Constitution
+2. [Answer Level 1 correctly]
+   → Expect: "✅ PASS — advancing to Level 2: UNDERSTAND"
+3. [Answer Level 2 poorly]
+   → Expect: "🔁 RETRY — Level 2: UNDERSTAND (attempt 2/3)"
+4. [Fail again] → "🔁 RETRY (attempt 3/3)"
+5. [Fail third time] → "⚡ 3 attempts at Level 2 — moving forward."
+6. [Continue to Level 5 and pass]
+   → Expect: "🏆 BLOOM'S COMPLETE" with journey summary
+```
+
+---
+
+## Previous Deployment History
+
+---
+
+### PR #7 — Hermes V1.6: Stateful /drill (2026-04-08)
+- Stateful `/drill`: 3 interleaved MCQs → grade all → auto-cascade to weakest concept quiz
+- PR merged to `main`
+
+### PR #3 — NB6/NB9/hermes fixes (2026-04-07)
 > **PR:** [#3 Fix NB6 duplicate header, NB9 snapshot bloat, hermes SQL injection](https://github.com/GaddeSaiHarsha/UPSC_2027/pull/3)
 > **Status:** Merged to `main` ✅
 
 ---
 
-## 📋 SUMMARY OF CHANGES (3 Files)
+## 📋 PREVIOUS CHANGES (PR #3 — 3 Files)
 
 ### 1. `NB6_CA_Orchestrator.py` — Gemini cleanup
 - Removed duplicate 37-line markdown header (copy-paste artifact)

@@ -8,13 +8,18 @@
     "stories": "upsc_catalog.rag.stories",
     "traps": "upsc_catalog.rag.story_traps",
     "chunks": "upsc_catalog.rag.contextual_chunks",
+    "embedded_chunks": "upsc_catalog.rag.embedded_chunks",
     "deep_analysis": "upsc_catalog.rag.deep_analysis",
     "geography_context": "upsc_catalog.rag.geography_context",
     "evaluations": "upsc_catalog.rag.answer_evaluations",
-    "essay_threads": "upsc_catalog.rag.essay_threads"
+    "essay_threads": "upsc_catalog.rag.essay_threads",
+    "kg_entities": "upsc_catalog.rag.kg_entities",
+    "kg_relationships": "upsc_catalog.rag.kg_relationships"
   },
+  "vector_search_index": "upsc_catalog.rag.upsc_knowledge_index",
   "local_vault_path": "~/Desktop/UPSC_2026",
   "sync_direction": "databricks_to_local",
   "sync_schedule": "8:15 AM IST daily (after NB6 7AM + NB7 8AM complete)",
-  "cli_profile": "upsc"
+  "cli_profile": "upsc",
+  "sql_warehouse_id": "589dccbdf8c6e4c9"
 }

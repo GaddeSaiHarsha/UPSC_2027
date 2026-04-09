@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════
 # Share this file with Claude Code, Claude API, or any AI assistant
 # to give full context about the UPSC preparation system.
-# Last updated: 2026-03-21 (Session 5 — Post Full Gap-Fill)
+# Last updated: 2026-04-09 (Session 6 — MCP + KG + Model Strategy)
 # ═══════════════════════════════════════════════════════════
 
 ## WHO I AM
@@ -25,7 +25,7 @@
 │              └──────────────────────────────────────┘    │
 │                                                          │
 │  8:00 AM ─── NB7 Practice Generator ───────────────┐    │
-│              │ 6 AI modes via ai_query (Llama 70B)  │    │
+│              │ 6 AI modes via ai_query (Sonnet 4.6) │    │
 │              │ → Mains Q&A, KARL eval, MCQs         │    │
 │              │ → Ethics case study, Model answers    │    │
 │              │ → Telugu Optional model answers       │    │
@@ -37,8 +37,11 @@
 │               Morning Dashboard (14 cells)               │
 │                                                          │
 │  Data ─────── 80,800 chunks in Delta tables             │
-│               Vector Search index (Qwen3 1024-dim)      │
-│               8 Delta tables in upsc_catalog.rag        │
+│               Vector Search: upsc_knowledge_index       │
+│               (Qwen3 1024-dim, live semantic search)    │
+│               Knowledge Graph: kg_entities +            │
+│               kg_relationships (entity web)             │
+│               10 Delta tables in upsc_catalog.rag       │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
                           │
@@ -147,6 +150,97 @@ Recurring themes across 30 days of CA for essay preparation.
 ```
 theme STRING, frequency INT, story_ids STRING,
 essay_title STRING, week_date STRING
+```
+
+### kg_entities
+Knowledge Graph — all UPSC-relevant entities extracted from the knowledge base.
+```
+entity_id STRING, entity_name STRING, entity_type STRING,
+description STRING, source_chunks STRING (JSON array)
+```
+Query: `SELECT entity_name, entity_type, description FROM upsc_catalog.rag.kg_entities ORDER BY entity_name`
+
+### kg_relationships
+Knowledge Graph — directed relationships between entities (for cross-paper interlinking).
+```
+relationship_id STRING, source_entity_id STRING, target_entity_id STRING,
+relationship_type STRING, context STRING, strength FLOAT
+```
+Query: `SELECT e1.entity_name, r.relationship_type, e2.entity_name FROM kg_relationships r JOIN kg_entities e1 ON r.source_entity_id=e1.entity_id JOIN kg_entities e2 ON r.target_entity_id=e2.entity_id WHERE e1.entity_name LIKE '%Article 21%'`
+
+### Vector Search Index
+- **Index name**: `upsc_catalog.rag.upsc_knowledge_index`
+- **Columns**: chunk_id, text, subject, source_file
+- **Embedding model**: Qwen3 0.6B (1024-dim)
+- **Usage in notebooks**: Via `requests.post(f"{HOST}/api/2.0/vector-search/indexes/upsc_catalog.rag.upsc_knowledge_index/query", ...)`
+- **Usage via MCP**: `search_chunks("query text", subject="Polity")` tool in Claude Code
+
+## AI MODEL STRATEGY
+
+| Component | Model | Why |
+|---|---|---|
+| NB6 CA Pipeline (7 AM) | **Claude Opus 4.6** (`databricks-claude-opus-4-6`) | Deep 2-pass reasoning, 1M context |
+| NB7 Practice Generator (8 AM) | **Claude Sonnet 4.6** (`databricks-claude-sonnet-4-6`) | 90% Opus quality, 3x cheaper |
+| Morning Dashboard AI cells | Sonnet 4.6 | Fast interactive queries |
+| Obsidian Copilot (chat with notes) | Opus 4.6 for review, Sonnet for daily | 1M context for vault analysis |
+| CLI ad-hoc queries | Sonnet 4.6 | Default for interactive use |
+| Claude Code (this session) | Claude Sonnet 4.6 (Pro) | Local, no DBU cost |
+| Embeddings | Qwen3 0.6B | 1024-dim multilingual |
+
+**Pricing** (DBU/1M tokens): Sonnet 4.6 = 43 input / 214 output · Opus 4.6 = 143 input / 536 output
+
+## MCP SERVERS (Claude Code ↔ Databricks Integration)
+
+Claude Code in this vault has 2 MCP server layers wired up in `.claude/settings.local.json`:
+
+### Layer 1 — Databricks Native MCP (via CLI)
+Start with: `databricks mcp start --profile upsc`
+Provides SQL execution, Unity Catalog browsing, Vector Search, MLflow.
+```bash
+# Test it:
+databricks mcp start --profile upsc
+# Then in Claude Code — ask naturally:
+# "Query today's stories from upsc_catalog.rag.stories"
+# "Search the knowledge graph for Article 21 connections"
+```
+
+### Layer 2 — Custom Study MCP (`07_Sync/mcp_databricks_server.py`)
+5 UPSC-specific tools wired directly to your study workflow:
+| Tool | What |
+|---|---|
+| `get_daily_summary` | Pipeline status (did NB6 run? how many stories?) |
+| `get_today_stories` | Today's CA with priority + GS paper mapping |
+| `get_traps` | Search traps by topic or subject |
+| `get_deep_analysis` | Mains skeleton + PYQ patterns for a story |
+| `search_chunks` | Full-text search across 80,800 KB chunks |
+
+**One-time setup** (on Mac):
+```bash
+pip install -r ~/Desktop/UPSC_2026/07_Sync/mcp_requirements.txt
+# Then fill sql_warehouse_id in 07_Sync/sync_config.json
+# Databricks → SQL Warehouses → your warehouse → Connection Details → HTTP path last segment
+```
+
+## OBSIDIAN COPILOT SETUP (Chat with Your Vault Notes)
+
+Install once, then `Cmd+Shift+C` to open Claude chat inside Obsidian:
+
+1. **Install plugin**: Settings → Community Plugins → Browse → "Copilot" by Logan Yang
+2. **Add custom model**: Settings → Copilot → Add Custom Model
+   - Provider: `OpenAI-compatible`
+   - Base URL: `https://adb-7405615460529826.6.azuredatabricks.net/serving-endpoints`
+   - API Key: your Databricks PAT (`dapi-...`)
+   - Model: `databricks-claude-opus-4-6` (for deep work) or `databricks-claude-sonnet-4-6`
+3. **Enable**: "Use active note as context" (ON) · Temperature: 0.3 · Max tokens: 2000
+4. **System prompt**: `You are a UPSC CSE 2027 expert tutor. Be precise, cite Article numbers, case laws, and specific facts.`
+
+**Starter prompts** (type in Copilot chat with your CA note open):
+```
+Summarize this CA note for GS2 Mains in 150 words
+What Prelims MCQs can be framed from this note?
+Create 5 flashcards (#card format for spaced repetition)
+Frame a GS4 Ethics case study from this story
+What would Ambedkar, Gandhi, and Kalam say about this?
 ```
 
 ## KNOWLEDGE BASE — 80,800 CHUNKS
@@ -292,9 +386,14 @@ Use Topic_Note template, check Trap_Index, create in correct subject folder
 <private>
 - **Host**: https://adb-7405615460529826.6.azuredatabricks.net
 - **CLI Profile**: `upsc` (Databricks CLI v2 via Homebrew)
+- **SQL Warehouse ID**: `589dccbdf8c6e4c9` (locked in sync_config.json)
 - **Volume**: `dbfs:/Volumes/upsc_catalog/rag/obsidian_ca/UPSC_2026/`
 - **IMPORTANT**: CLI needs `dbfs:` prefix for Volume paths
 - **Sync**: `databricks --profile upsc fs cp -r dbfs:/Volumes/upsc_catalog/rag/obsidian_ca/UPSC_2026/ ~/Desktop/UPSC_2026/ --overwrite`
+- **Vault path (Mac)**: `~/Desktop/UPSC_2026`
+- **Vault path (Linux/Codespace)**: `/home/$USER/UPSC_2026`
+- **Hermes memory DB**: `/home/$USER/UPSC_2026/.upsc_memory.db`
+- **Telegram User ID**: `2022402970`
 </private>
 
 ## DAILY PIPELINE TIMELINE
@@ -305,7 +404,7 @@ Use Topic_Note template, check Trap_Index, create in correct subject folder
 07:05      CA note written to Volume: CA_YYYY-MM-DD.md
 07:06      contextual_chunks: CA text chunked + embedded
            ──────────────────────────────────
-08:00 IST  NB7 runs → ai_query (Llama 70B) → 6 modes
+08:00 IST  NB7 runs → ai_query (Sonnet 4.6) → 6 modes
 08:01-05   Modes 1-5: Q&A, KARL, MCQs, Ethics, Model Answers
 08:06      Mode 6: Telugu Optional model answers
            ──────────────────────────────────
