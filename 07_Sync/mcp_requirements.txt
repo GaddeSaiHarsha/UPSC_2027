@@ -1,0 +1,8 @@
+# UPSC Databricks MCP Server — Python dependencies
+# Install: pip install -r mcp_requirements.txt
+
+# MCP framework (Anthropic's Model Context Protocol)
+mcp>=1.0.0
+
+# Databricks SQL connector (queries Delta tables via SQL warehouse)
+databricks-sql-connector>=3.0.0

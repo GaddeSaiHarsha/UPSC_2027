@@ -1,9 +1,19 @@
 """
-HERMES — Full UPSC AIR-1 Mentor Bot
-=====================================
+HERMES — Full UPSC AIR-1 Mentor Bot  [V1.8]
+=============================================
 Groq backend (Llama 3.3 70B) — Free tier, ~$0/month
 Same commands as your main bot + 15 new Hermes-exclusive commands
 Own dedicated SQLite DB (.hermes_memory.db) with WAL mode
+
+CHANGELOG:
+  V1.5 — Stateful /quiz and /socratic (hidden answer key + session TTL)
+  V1.6 — Stateful /drill with 3-MCQ interleave and auto-cascade to weakest concept
+  V1.7 — Stateful /daf (3-round interview, angle rotation, hidden rubric)
+         and /mock_iq (5-question panel, one-at-a-time grading, final summary)
+         + interview_history DB table
+  V1.8 — Stateful /recall (2-phase: brain-dump → gap-targeted follow-up, scored)
+         and /progress (Bloom's Taxonomy Levels 1-5: pass→advance, fail→retry,
+         max 2 retries per level before forced advance, full journey summary)
 
 HERMES IS:
   A 20+ year UPSC master who has produced AIR 1, 2, 5, 11 candidates.
@@ -290,6 +300,17 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 year INTEGER, paper TEXT, question_text TEXT,
                 subject TEXT, topic TEXT, pattern_tag TEXT);
+
+            CREATE TABLE IF NOT EXISTS interview_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT DEFAULT (datetime('now')),
+                mode TEXT,
+                round INTEGER DEFAULT 1,
+                angle TEXT,
+                question TEXT,
+                user_answer TEXT,
+                score REAL,
+                feedback TEXT);
         """)
         conn.commit()
         conn.close()
@@ -662,6 +683,681 @@ async def thinking(update: Update, msg: str = "🧠 Hermes thinking..."):
 
 
 # ================================================================
+# SESSION + QUIZ PARSING HELPERS
+# ================================================================
+
+SESSION_TTL_SECONDS = 45 * 60  # 45 minutes
+
+
+def set_session(ctx, mode: str, data: dict):
+    ctx.user_data["_session"] = {
+        "mode": mode,
+        "data": data,
+        "updated_at": datetime.utcnow().isoformat()
+    }
+
+
+def clear_session(ctx):
+    ctx.user_data.pop("_session", None)
+
+
+def get_session(ctx):
+    session = ctx.user_data.get("_session")
+    if not session:
+        return None
+
+    try:
+        updated_at = datetime.fromisoformat(session.get("updated_at", ""))
+    except ValueError:
+        clear_session(ctx)
+        return None
+
+    age = (datetime.utcnow() - updated_at).total_seconds()
+    if age > SESSION_TTL_SECONDS:
+        clear_session(ctx)
+        return None
+
+    return session
+
+
+def touch_session(ctx):
+    session = ctx.user_data.get("_session")
+    if session:
+        session["updated_at"] = datetime.utcnow().isoformat()
+
+
+def normalise_mcq_answer(text: str):
+    """
+    Accepts: A / b / Option C / (D) / answer is B
+    Returns one of A/B/C/D or None
+    """
+    if not text:
+        return None
+    m = re.search(r"\b([ABCD])\b", text.strip().upper())
+    return m.group(1) if m else None
+
+
+def extract_tagged_block(text: str, tag: str) -> str:
+    """
+    Extract content from:
+      [TAG]
+      ...
+      [/TAG]
+    """
+    pattern = rf"\[{tag}\](.*?)\[/{tag}\]"
+    m = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+    return m.group(1).strip() if m else ""
+
+
+def parse_quiz_payload(raw_text: str) -> tuple[str, dict]:
+    """
+    Expected model output:
+
+    [USER]
+    Q: ...
+    (A) ...
+    (B) ...
+    (C) ...
+    (D) ...
+    Reply with A, B, C, or D.
+    [/USER]
+
+    [KEY]
+    {"topic":"Polity","concept":"Federalism","correct_option":"B",
+     "explanation":"...", "trap":"...", "rule":"..."}
+    [/KEY]
+    """
+    user_block = extract_tagged_block(raw_text, "USER")
+    key_block = extract_tagged_block(raw_text, "KEY")
+
+    if not user_block:
+        raise ValueError("Missing [USER] block in quiz payload")
+    if not key_block:
+        raise ValueError("Missing [KEY] block in quiz payload")
+
+    try:
+        key = json.loads(key_block)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid quiz KEY JSON: {e}")
+
+    required = ["topic", "concept", "correct_option", "explanation", "trap", "rule"]
+    missing = [k for k in required if k not in key]
+    if missing:
+        raise ValueError(f"Missing quiz key fields: {missing}")
+
+    key["correct_option"] = str(key["correct_option"]).strip().upper()
+    if key["correct_option"] not in {"A", "B", "C", "D"}:
+        raise ValueError("correct_option must be A/B/C/D")
+
+    return user_block, key
+
+
+def render_quiz_feedback(user_answer: str, key: dict, is_correct: bool) -> str:
+    verdict = "✅ CORRECT" if is_correct else "❌ INCORRECT"
+    lines = [
+        verdict,
+        f"Your answer: {user_answer}",
+        f"Correct option: {key.get('correct_option', '?')}",
+        "",
+        "WHY:",
+        str(key.get("explanation", "")).strip(),
+        "",
+        "TRAP:",
+        str(key.get("trap", "")).strip(),
+        "",
+        "RULE:",
+        str(key.get("rule", "")).strip(),
+    ]
+    return "\n".join(lines)
+
+
+# ================================================================
+# QUIZ GENERATION WITH HIDDEN ANSWER KEY
+# ================================================================
+
+def build_quiz_prompt(topic: str, concept_hint: str = "") -> str:
+    topic_line = f"Topic: {topic}\n" if topic else "Topic: weakest relevant topic\n"
+    concept_line = f"Concept hint: {concept_hint}\n" if concept_hint else ""
+
+    return (
+        "Generate ONE UPSC-style Prelims MCQ with a hidden answer key.\n\n"
+        f"{topic_line}"
+        f"{concept_line}\n"
+        "Rules:\n"
+        "1. Must be realistic UPSC style: relationship, exception, subtle flaw, conceptual distinction.\n"
+        "2. Include one tempting wrong option with a subtle error.\n"
+        "3. Do NOT make it trivial.\n"
+        "4. Do NOT reveal answer in public question.\n\n"
+        "Output EXACTLY in this format:\n\n"
+        "[USER]\n"
+        "Q: [full question]\n"
+        "(A) ...\n"
+        "(B) ...\n"
+        "(C) ...\n"
+        "(D) ...\n"
+        "Reply with A, B, C, or D.\n"
+        "[/USER]\n\n"
+        "[KEY]\n"
+        "{\"topic\":\"...\","
+        "\"concept\":\"...\","
+        "\"correct_option\":\"A/B/C/D\","
+        "\"explanation\":\"2-4 lines\","
+        "\"trap\":\"1-3 lines\","
+        "\"rule\":\"one memory rule\"}\n"
+        "[/KEY]\n\n"
+        "The [KEY] block must be valid JSON."
+    )
+
+
+async def generate_quiz_with_key(topic: str, mem: str, concept_hint: str = "") -> tuple[str, dict, int, int]:
+    prompt = build_quiz_prompt(topic, concept_hint)
+    raw_resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+
+    public_text, key = parse_quiz_payload(raw_resp)
+    return public_text, key, tok, lat
+
+
+# ================================================================
+# DRILL GENERATION WITH HIDDEN ANSWER KEYS (3 MCQs)
+# ================================================================
+
+def build_drill_prompt() -> str:
+    return (
+        "Generate THREE UPSC-style Prelims MCQs from 3 DIFFERENT subjects as an interleaved drill.\n\n"
+        "Rules:\n"
+        "1. Each question from a different GS area or Optional.\n"
+        "2. Must be realistic UPSC style: relationship, exception, subtle flaw, conceptual distinction.\n"
+        "3. Include one tempting wrong option per question.\n"
+        "4. Do NOT reveal answers in the public section.\n"
+        "5. Number questions 1, 2, 3.\n\n"
+        "Output EXACTLY in this format:\n\n"
+        "[USER]\n"
+        "Q1: [full question]\n"
+        "(A) ...\n(B) ...\n(C) ...\n(D) ...\n\n"
+        "Q2: [full question]\n"
+        "(A) ...\n(B) ...\n(C) ...\n(D) ...\n\n"
+        "Q3: [full question]\n"
+        "(A) ...\n(B) ...\n(C) ...\n(D) ...\n\n"
+        "Reply with answers for all 3 questions, e.g. 1-B 2-D 3-A\n"
+        "[/USER]\n\n"
+        "[KEY]\n"
+        "[{\"qno\":1,\"topic\":\"...\",\"concept\":\"...\",\"correct_option\":\"A/B/C/D\","
+        "\"explanation\":\"2-4 lines\",\"trap\":\"1-3 lines\",\"rule\":\"one memory rule\"},"
+        "{\"qno\":2,\"topic\":\"...\",\"concept\":\"...\",\"correct_option\":\"A/B/C/D\","
+        "\"explanation\":\"2-4 lines\",\"trap\":\"1-3 lines\",\"rule\":\"one memory rule\"},"
+        "{\"qno\":3,\"topic\":\"...\",\"concept\":\"...\",\"correct_option\":\"A/B/C/D\","
+        "\"explanation\":\"2-4 lines\",\"trap\":\"1-3 lines\",\"rule\":\"one memory rule\"}]\n"
+        "[/KEY]\n\n"
+        "The [KEY] block must be a valid JSON array of exactly 3 objects."
+    )
+
+
+def parse_drill_payload(raw_text: str) -> tuple[str, list[dict]]:
+    user_block = extract_tagged_block(raw_text, "USER")
+    key_block = extract_tagged_block(raw_text, "KEY")
+
+    if not user_block:
+        raise ValueError("Missing [USER] block in drill payload")
+    if not key_block:
+        raise ValueError("Missing [KEY] block in drill payload")
+
+    try:
+        keys = json.loads(key_block)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid drill KEY JSON: {e}")
+
+    if not isinstance(keys, list) or len(keys) != 3:
+        raise ValueError(f"Expected 3 drill keys, got {type(keys).__name__}({len(keys) if isinstance(keys, list) else ''})")
+
+    required = ["qno", "topic", "concept", "correct_option", "explanation", "trap", "rule"]
+    for i, k in enumerate(keys):
+        missing = [f for f in required if f not in k]
+        if missing:
+            raise ValueError(f"Drill key {i+1} missing fields: {missing}")
+        k["correct_option"] = str(k["correct_option"]).strip().upper()
+        if k["correct_option"] not in {"A", "B", "C", "D"}:
+            raise ValueError(f"Drill key {i+1}: correct_option must be A/B/C/D")
+        k["qno"] = int(k["qno"])
+
+    return user_block, keys
+
+
+async def generate_drill_with_keys(mem: str) -> tuple[str, list[dict], int, int]:
+    prompt = build_drill_prompt()
+    raw_resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+
+    public_text, keys = parse_drill_payload(raw_resp)
+    return public_text, keys, tok, lat
+
+
+def parse_drill_answers(text: str) -> dict[int, str]:
+    """
+    Parse user drill answers. Supports:
+      - '1-B 2-D 3-A'
+      - 'B D A'
+      - '1) B, 2) D, 3) A'
+    Returns: {1: 'B', 2: 'D', 3: 'A'}
+    """
+    text = text.strip().upper()
+    answers = {}
+
+    # Pattern 1: numbered like '1-B' or '1)B' or '1) B' or '1.B'
+    numbered = re.findall(r'(\d)\s*[\-\)\.\:]\s*([ABCD])', text)
+    if numbered:
+        for qno, opt in numbered:
+            answers[int(qno)] = opt
+        return answers
+
+    # Pattern 2: bare letters like 'B D A' or 'B, D, A'
+    bare = re.findall(r'\b([ABCD])\b', text)
+    if len(bare) == 3:
+        for i, opt in enumerate(bare, 1):
+            answers[i] = opt
+        return answers
+
+    return answers
+
+
+def render_single_drill_result(qkey: dict, user_answer: str, is_correct: bool) -> str:
+    verdict = "✅" if is_correct else "❌"
+    lines = [
+        f"{verdict} Q{qkey['qno']}: Your answer: {user_answer} | Correct: {qkey['correct_option']}",
+        f"WHY: {str(qkey.get('explanation', '')).strip()}",
+        f"TRAP: {str(qkey.get('trap', '')).strip()}",
+        f"RULE: {str(qkey.get('rule', '')).strip()}",
+    ]
+    return "\n".join(lines)
+
+
+# ================================================================
+# DAF INTERVIEW HELPERS (V1.7 — Stateful 3-Round Loop)
+# ================================================================
+
+_DAF_ANGLE_MAP = {
+    "tech":        (
+        "Data governance in India — his Azure/Databricks/AI expertise vs "
+        "DPDP Act 2023, CERT-In directions, or National Data Governance Framework. "
+        "Test both technical depth AND policy understanding simultaneously."
+    ),
+    "brain_drain": (
+        "He left India for Canada as a Data Engineer. Now wants IAS. "
+        "Probe the contradiction hard — brain drain, privilege, commitment to India."
+    ),
+    "telugu":      (
+        "His Telugu Optional — language preservation, Official Language policy, "
+        "Classical Language status, AP/TS linguistic politics, or "
+        "Kavitrayam's relevance to modern governance."
+    ),
+    "canada":      (
+        "He has lived and worked in Canada — what can India specifically learn "
+        "from Canadian governance, federalism, or immigration policy? Demand specifics."
+    ),
+    "ai_ethics":   (
+        "He works daily with AI/ML/Databricks — probe India's AI policy, NITI Aayog "
+        "Responsible AI framework, deepfakes in elections, or algorithmic bias in "
+        "public service delivery. Expect domain expertise from him."
+    ),
+}
+
+
+def build_daf_question_prompt(angle: str = "") -> str:
+    angle_desc = _DAF_ANGLE_MAP.get(
+        angle,
+        "Pick the most probing angle from: tech, brain_drain, telugu, canada, ai_ethics."
+    )
+    return (
+        "UPSC INTERVIEW BOARD — you are the Chairman.\n\n"
+        "CANDIDATE: Sai Harsha Gadde — Data Engineer, Calgary Canada. "
+        "Telugu Literature Optional. MS degree. Azure/Databricks/AI background.\n\n"
+        f"ANGLE: {angle_desc}\n\n"
+        "Rules:\n"
+        "1. Ask ONE high-pressure question specific to his profile — not generic IAS filler.\n"
+        "2. Question must be 1-2 sentences, end with a question mark.\n"
+        "3. Do NOT include evaluation criteria or hints in [USER] block.\n\n"
+        "Output EXACTLY:\n\n"
+        "[USER]\n"
+        "<Chairman's question — 1-2 sentences>\n"
+        "[/USER]\n\n"
+        "[KEY]\n"
+        "{\"angle\":\"<angle name>\","
+        "\"key_points\":[\"<3-5 specific facts/arguments the ideal answer must contain>\"],"
+        "\"ideal_structure\":\"<2-3 lines: how to structure the perfect answer>\","
+        "\"trap\":\"<most common mistake candidates make on this angle>\","
+        "\"follow_up_angles\":[\"<2 natural follow-up question angles, comma-separated>\"]}\n"
+        "[/KEY]\n\n"
+        "The [KEY] block must be valid JSON."
+    )
+
+
+def parse_daf_payload(raw_text: str) -> tuple[str, dict]:
+    question = extract_tagged_block(raw_text, "USER")
+    key_block = extract_tagged_block(raw_text, "KEY")
+
+    if not question:
+        raise ValueError("Missing [USER] block in DAF payload")
+    if not key_block:
+        raise ValueError("Missing [KEY] block in DAF payload")
+
+    try:
+        key = json.loads(key_block)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid DAF KEY JSON: {e}")
+
+    required = ["angle", "key_points", "ideal_structure", "trap", "follow_up_angles"]
+    missing = [k for k in required if k not in key]
+    if missing:
+        raise ValueError(f"Missing DAF key fields: {missing}")
+
+    return question.strip(), key
+
+
+async def generate_daf_question(angle: str, mem: str) -> tuple[str, dict, int, int]:
+    prompt = build_daf_question_prompt(angle)
+    raw_resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    question, key = parse_daf_payload(raw_resp)
+    return question, key, tok, lat
+
+
+def build_daf_eval_prompt(question: str, user_answer: str, key: dict) -> str:
+    key_points = "\n".join(f"  - {p}" for p in key.get("key_points", []))
+    ideal = key.get("ideal_structure", "")
+    trap = key.get("trap", "")
+    return (
+        "UPSC INTERVIEW BOARD — evaluate this candidate answer strictly.\n\n"
+        f"QUESTION ASKED:\n{question}\n\n"
+        f"CANDIDATE'S ANSWER:\n{user_answer}\n\n"
+        "EVALUATION RUBRIC (hidden from candidate):\n"
+        f"Key points the ideal answer must include:\n{key_points}\n\n"
+        f"Ideal structure: {ideal}\n"
+        f"Common trap on this angle: {trap}\n\n"
+        "Output exactly:\n"
+        "SCORE: X/10\n"
+        "VERDICT: 2-3 line honest board assessment\n"
+        "MISSING: Critical points absent (max 3 bullets)\n"
+        "IDEAL: How a top candidate would answer this (3-5 lines)\n"
+        "CHAIRMAN FOLLOW-UP: One natural follow-up the board would ask next"
+    )
+
+
+# ================================================================
+# MOCK IQ HELPERS (V1.7 — Stateful 5-Question Panel)
+# ================================================================
+
+def build_mock_iq_prompt() -> str:
+    return (
+        "MOCK UPSC INTERVIEW — generate 5 board questions with hidden rubrics.\n\n"
+        "CANDIDATE: Sai Harsha Gadde — Data Engineer, Calgary Canada. "
+        "Telugu Literature Optional. MS degree. Azure/Databricks/AI background.\n\n"
+        "5 board members, one question each:\n"
+        "  Q1 (Chairman): DAF-based — Canada/Tech background, most probing\n"
+        "  Q2 (Senior IAS): Current Affairs — governance angle, cross-cutting\n"
+        "  Q3 (Academic): Telugu Literature — test optional knowledge directly\n"
+        "  Q4 (Technocrat): Technology policy — his domain, AI/data/digital India\n"
+        "  Q5 (Generalist): Surprise — philosophical, ethical, or completely unexpected\n\n"
+        "Rules:\n"
+        "1. Each question must be 1-2 sentences, board-level pressure.\n"
+        "2. Do NOT add evaluation hints in [USER] block.\n"
+        "3. Questions must progress in difficulty (Q1 manageable → Q5 hardest).\n\n"
+        "Output EXACTLY:\n\n"
+        "[USER]\n"
+        "Q1 (Chairman): <question>\n\n"
+        "Q2 (Senior IAS): <question>\n\n"
+        "Q3 (Academic): <question>\n\n"
+        "Q4 (Technocrat): <question>\n\n"
+        "Q5 (Generalist): <question>\n"
+        "[/USER]\n\n"
+        "[KEY]\n"
+        "[{\"qno\":1,\"member\":\"Chairman\","
+        "\"key_points\":[\"...\",\"...\",\"...\"],"
+        "\"ideal_structure\":\"...\",\"trap\":\"...\"},"
+        "{\"qno\":2,\"member\":\"Senior IAS\","
+        "\"key_points\":[\"...\",\"...\",\"...\"],"
+        "\"ideal_structure\":\"...\",\"trap\":\"...\"},"
+        "{\"qno\":3,\"member\":\"Academic\","
+        "\"key_points\":[\"...\",\"...\",\"...\"],"
+        "\"ideal_structure\":\"...\",\"trap\":\"...\"},"
+        "{\"qno\":4,\"member\":\"Technocrat\","
+        "\"key_points\":[\"...\",\"...\",\"...\"],"
+        "\"ideal_structure\":\"...\",\"trap\":\"...\"},"
+        "{\"qno\":5,\"member\":\"Generalist\","
+        "\"key_points\":[\"...\",\"...\",\"...\"],"
+        "\"ideal_structure\":\"...\",\"trap\":\"...\"}]\n"
+        "[/KEY]\n\n"
+        "The [KEY] block must be a valid JSON array of exactly 5 objects."
+    )
+
+
+def parse_mock_iq_payload(raw_text: str) -> tuple[list, list]:
+    """
+    Returns:
+        questions: list of 5 question strings (with member label)
+        keys: list of 5 key dicts
+    """
+    user_block = extract_tagged_block(raw_text, "USER")
+    key_block  = extract_tagged_block(raw_text, "KEY")
+
+    if not user_block:
+        raise ValueError("Missing [USER] block in mock_iq payload")
+    if not key_block:
+        raise ValueError("Missing [KEY] block in mock_iq payload")
+
+    questions = []
+    for m in re.finditer(
+        r'Q(\d)\s*\(([^)]+)\)\s*:\s*(.+?)(?=\nQ\d|\Z)',
+        user_block, re.DOTALL
+    ):
+        qno_str  = m.group(1)
+        member   = m.group(2).strip()
+        text     = m.group(3).strip()
+        questions.append(f"Q{qno_str} ({member}): {text}")
+
+    if len(questions) != 5:
+        raise ValueError(f"Expected 5 mock_iq questions, parsed {len(questions)}")
+
+    try:
+        keys = json.loads(key_block)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid mock_iq KEY JSON: {e}")
+
+    if not isinstance(keys, list) or len(keys) != 5:
+        n = len(keys) if isinstance(keys, list) else "?"
+        raise ValueError(f"Expected 5 mock_iq keys, got {n}")
+
+    required = ["qno", "member", "key_points", "ideal_structure", "trap"]
+    for i, k in enumerate(keys):
+        missing = [f for f in required if f not in k]
+        if missing:
+            raise ValueError(f"Mock IQ key {i+1} missing fields: {missing}")
+        k["qno"] = int(k["qno"])
+
+    return questions, keys
+
+
+async def generate_mock_iq_questions(mem: str) -> tuple[list, list, int, int]:
+    prompt = build_mock_iq_prompt()
+    raw_resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    questions, keys = parse_mock_iq_payload(raw_resp)
+    return questions, keys, tok, lat
+
+
+def build_interview_eval_prompt(question: str, member: str, user_answer: str, key: dict) -> str:
+    key_points = "\n".join(f"  - {p}" for p in key.get("key_points", []))
+    ideal = key.get("ideal_structure", "")
+    trap  = key.get("trap", "")
+    return (
+        f"UPSC INTERVIEW BOARD — {member} evaluates candidate answer.\n\n"
+        f"QUESTION:\n{question}\n\n"
+        f"CANDIDATE'S ANSWER:\n{user_answer}\n\n"
+        "EVALUATION RUBRIC (hidden from candidate):\n"
+        f"Key points required:\n{key_points}\n"
+        f"Ideal structure: {ideal}\n"
+        f"Common trap: {trap}\n\n"
+        "Evaluate strictly (board standard). Output:\n"
+        "SCORE: X/10\n"
+        "VERDICT: 2-3 lines honest assessment\n"
+        "MISSING: Critical gaps (max 3 bullets)\n"
+        "IDEAL: How a top candidate would answer this (3-4 lines)"
+    )
+
+
+# ================================================================
+# RECALL HELPERS (V1.8 — Stateful 2-Phase Active Recall)
+# ================================================================
+
+def build_recall_question_prompt(topic: str) -> str:
+    """Phase 1: Ask the student to do a brain dump. Returns [USER]+[KEY] tagged output."""
+    return (
+        f"ACTIVE RECALL SESSION — Topic: {topic}\n\n"
+        "You are Hermes. Do NOT teach. Your job is to test.\n\n"
+        "Generate a structured recall challenge.\n\n"
+        "FORMAT YOUR RESPONSE AS EXACTLY TWO TAGGED BLOCKS:\n\n"
+        "[USER]\n"
+        f"Write everything you know about **{topic}** in 3-4 sentences.\n"
+        "No notes. No looking up. Pure memory.\n"
+        "[/USER]\n\n"
+        "[KEY]\n"
+        "{\n"
+        f'  "topic": "{topic}",\n'
+        '  "expected_points": ["point 1", "point 2", "point 3", "point 4", "point 5"],\n'
+        '  "trap_points": ["common wrong belief 1", "common wrong belief 2"],\n'
+        '  "follow_up_gap": "the single most important gap to probe in phase 2"\n'
+        "}\n"
+        "[/KEY]\n\n"
+        "The KEY must be valid JSON. expected_points = 5 most important facts a UPSC topper must know."
+    )
+
+
+def parse_recall_payload(raw_text: str) -> tuple[str, dict]:
+    """Split [USER] shown text from [KEY] rubric dict."""
+    user_block = extract_tagged_block(raw_text, "USER") or raw_text
+    key_block  = extract_tagged_block(raw_text, "KEY")  or "{}"
+    try:
+        key = json.loads(key_block)
+    except json.JSONDecodeError:
+        key = {"topic": "", "expected_points": [], "trap_points": [], "follow_up_gap": ""}
+    return user_block.strip(), key
+
+
+async def generate_recall_question(topic: str, mem: str) -> tuple[str, dict, int, int]:
+    """Call Groq, return (public_question, key_dict, tokens, latency_ms)."""
+    prompt = build_recall_question_prompt(topic)
+    raw, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    public_q, key = parse_recall_payload(raw)
+    return public_q, key, tok, lat
+
+
+def build_recall_eval_prompt(topic: str, expected_points: list, trap_points: list,
+                              follow_up_gap: str, user_dump: str) -> str:
+    """Phase 2 eval prompt: grade the brain dump and ask a targeted follow-up."""
+    pts = "\n".join(f"  - {p}" for p in expected_points)
+    traps = "\n".join(f"  - {t}" for t in trap_points) if trap_points else "  (none)"
+    return (
+        f"RECALL EVALUATION — Topic: {topic}\n\n"
+        f"EXPECTED POINTS:\n{pts}\n\n"
+        f"COMMON TRAPS:\n{traps}\n\n"
+        f"STUDENT DUMP:\n{user_dump}\n\n"
+        "YOUR TASK:\n"
+        "1. WHAT YOU GOT RIGHT — list specific hits (be generous but accurate)\n"
+        "2. WHAT YOU MISSED — list what was absent from their dump\n"
+        "3. CONFIDENCE vs ACCURACY — did they seem confident but miss key things?\n"
+        f"4. SCORE: X/10 (strict — 10/10 only if all expected points covered)\n"
+        f"5. FOLLOW-UP QUESTION targeting this gap: {follow_up_gap}\n\n"
+        "Be direct. No padding. The follow-up question must end with a '?'."
+    )
+
+
+# ================================================================
+# PROGRESS HELPERS (V1.8 — Stateful Bloom's Taxonomy Levels 1-5)
+# ================================================================
+
+_BLOOM_LEVEL_NAMES = {
+    1: "RECALL",
+    2: "UNDERSTAND",
+    3: "APPLY",
+    4: "ANALYSE",
+    5: "EVALUATE",
+}
+
+_BLOOM_LEVEL_DESCS = {
+    1: "List 3-4 key facts.",
+    2: "Explain WHY this matters for India/UPSC.",
+    3: "Give a real example where this principle worked or failed.",
+    4: "Compare with a closely related concept.",
+    5: "Critically examine from 3 different perspectives (policy / society / economy).",
+}
+
+
+def build_progress_question_prompt(topic: str, level: int) -> str:
+    """Build a Bloom's level question with [USER]+[KEY] blocks."""
+    lvl_name = _BLOOM_LEVEL_NAMES[level]
+    lvl_desc = _BLOOM_LEVEL_DESCS[level]
+    return (
+        f"PROGRESSIVE RECALL — Topic: {topic} | Bloom's Level {level}: {lvl_name}\n\n"
+        "You are Hermes. Generate ONE question at the specified Bloom's level.\n\n"
+        "FORMAT AS EXACTLY TWO TAGGED BLOCKS:\n\n"
+        "[USER]\n"
+        f"📊 LEVEL {level}/5 — {lvl_name}\n\n"
+        f"**{topic}** — {lvl_desc}\n\n"
+        "(Answer in 3-5 sentences. /cancel to exit.)\n"
+        "[/USER]\n\n"
+        "[KEY]\n"
+        "{\n"
+        f'  "topic": "{topic}",\n'
+        f'  "level": {level},\n'
+        '  "key_points": ["point 1", "point 2", "point 3"],\n'
+        '  "pass_threshold": 6,\n'
+        '  "examiner_note": "what distinguishes a pass from a fail at this level"\n'
+        "}\n"
+        "[/KEY]\n\n"
+        "key_points = 3 specific facts/ideas the student MUST cover to pass this level."
+    )
+
+
+def parse_progress_payload(raw_text: str) -> tuple[str, dict]:
+    """Split [USER] shown question from [KEY] rubric dict."""
+    user_block = extract_tagged_block(raw_text, "USER") or raw_text
+    key_block  = extract_tagged_block(raw_text, "KEY")  or "{}"
+    try:
+        key = json.loads(key_block)
+    except json.JSONDecodeError:
+        key = {"topic": "", "level": 1, "key_points": [], "pass_threshold": 6, "examiner_note": ""}
+    return user_block.strip(), key
+
+
+async def generate_progress_question(topic: str, level: int, mem: str) -> tuple[str, dict, int, int]:
+    """Call Groq, return (public_question, key_dict, tokens, latency_ms)."""
+    prompt = build_progress_question_prompt(topic, level)
+    raw, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+    public_q, key = parse_progress_payload(raw)
+    return public_q, key, tok, lat
+
+
+def build_progress_eval_prompt(topic: str, level: int, question: str,
+                                user_answer: str, key: dict) -> str:
+    """Evaluate a Bloom's level answer. Decides pass/fail."""
+    pts = "\n".join(f"  - {p}" for p in key.get("key_points", []))
+    threshold = key.get("pass_threshold", 6)
+    examiner_note = key.get("examiner_note", "")
+    lvl_name = _BLOOM_LEVEL_NAMES.get(level, f"Level {level}")
+    return (
+        f"PROGRESSIVE RECALL EVALUATION\n"
+        f"Topic: {topic} | Level {level}: {lvl_name}\n\n"
+        f"QUESTION:\n{question}\n\n"
+        f"KEY POINTS REQUIRED:\n{pts}\n\n"
+        f"EXAMINER NOTE: {examiner_note}\n"
+        f"PASS THRESHOLD: {threshold}/10\n\n"
+        f"STUDENT ANSWER:\n{user_answer}\n\n"
+        "YOUR TASK:\n"
+        "1. HITS — which key points did they cover? (specific)\n"
+        "2. MISSES — which key points did they skip?\n"
+        f"3. SCORE: X/10 (strict — use {threshold}/10 as the pass line)\n"
+        "4. VERDICT — exactly one of: PASS (advance to next level) or RETRY (repeat this level)\n"
+        "5. ONE LINE of feedback (brutal honesty — no softening)\n\n"
+        "Format: end with SCORE: X/10 and VERDICT: PASS or VERDICT: RETRY on separate lines."
+    )
+
+
+# ================================================================
 # SECTION 1 — CORE COMMANDS
 # ================================================================
 
@@ -700,9 +1396,10 @@ cmd_help = cmd_start
 
 
 async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not check_auth(update): return
-    ctx.user_data.clear()
-    await update.message.reply_text("✅ Cleared. What next?")
+    if not check_auth(update):
+        return
+    clear_session(ctx)
+    await update.message.reply_text("✅ Active session cleared. What next?")
 
 
 async def cmd_teach(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -750,17 +1447,20 @@ async def cmd_log(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_eod(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not check_auth(update): return
+    if not check_auth(update):
+        return
+
     await thinking(update, "🌅 Hermes EOD review...")
+    weekly_hours = get_weekly_hours()
+
     prompt = (
         "END OF DAY REVIEW — be honest, not gentle.\n\n"
         "1. WHAT WORKED TODAY — specific, not vague\n"
         "2. WHAT DIDN'T — name it directly\n"
-        "3. RETENTION CHECK — pick the most important concept from today's log "
-        "and ask me one question on it right now\n"
-        "4. TOMORROW'S PRIORITY — one subject, one topic, specific reason why\n"
+        "3. RETENTION CHECK — pick the most important concept from today's log and ask one question now\n"
+        "4. TOMORROW'S PRIORITY — one subject, one topic, reason\n"
         "5. PACE CHECK — am I on track for 1,820 hours by May 2027?\n"
-        "   Estimate: {weekly_hours} this week. Is this enough?\n"
+        f"   Estimate: {weekly_hours} this week. Is this enough?\n"
         "6. INTENSITY VERDICT: Light / On-Track / Heavy"
     )
     mem = get_memory_context()
@@ -873,26 +1573,33 @@ async def cmd_weak(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ================================================================
 
 async def cmd_quiz(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not check_auth(update): return
+    if not check_auth(update):
+        return
+
     subject = " ".join(ctx.args) if ctx.args else ""
-    prompt = (
-        f"Give me 1 UPSC Prelims MCQ on: {subject}.\n"
-        if subject else
-        "Give me 1 UPSC Prelims MCQ on my weakest topic right now.\n"
-    )
-    prompt += (
-        "\nFormat exactly:\n"
-        "Q: [question — full sentence]\n"
-        "(A) ... (B) ... (C) ... (D) ...\n\n"
-        "Design rule: include one subtle trap — a statement that's 95% true but has "
-        "one critical flaw. This is how real UPSC Prelims works.\n"
-        "Do NOT reveal answer. Wait for my response."
-    )
     await thinking(update, "🎯 Generating Prelims MCQ...")
+
     mem = get_memory_context()
-    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
-    log_hermes("/quiz", subject or "auto", resp, tok, lat)
-    await send_long(update, resp)
+
+    try:
+        public_text, key, tok, lat = await generate_quiz_with_key(subject or "General Studies", mem)
+    except Exception as e:
+        log.error(f"/quiz parse failure: {e}")
+        await update.message.reply_text("⚠️ Quiz generation failed. Try /quiz again.")
+        return
+
+    log_hermes("/quiz", subject or "auto", public_text, tok, lat)
+
+    set_session(ctx, "quiz", {
+        "topic": key.get("topic", subject or "General Studies"),
+        "concept": key.get("concept", subject or "General"),
+        "question_text": public_text,
+        "answer_key": key,
+        "attempts": 0,
+        "started_at": datetime.utcnow().isoformat()
+    })
+
+    await send_long(update, public_text)
 
 
 async def cmd_trap(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -921,19 +1628,29 @@ async def cmd_trap(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_drill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not check_auth(update): return
+    if not check_auth(update):
+        return
+
     await thinking(update, "🌪️ Interleaved Drill...")
-    prompt = (
-        "INTERLEAVED DRILL — mix 3 questions from 3 different subjects from my weak list.\n"
-        "Make them rapid-fire. Each from a different GS area.\n"
-        "Include one from Telugu Optional.\n"
-        "Do NOT reveal answers. Number them 1, 2, 3.\n"
-        "After I answer all three, grade each and explain."
-    )
     mem = get_memory_context()
-    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
-    log_hermes("/drill", "interleaved", resp, tok, lat)
-    await send_long(update, resp)
+
+    try:
+        public_text, keys, tok, lat = await generate_drill_with_keys(mem)
+    except Exception as e:
+        log.error(f"/drill parse failure: {e}")
+        await update.message.reply_text("⚠️ Drill generation failed. Try /drill again.")
+        return
+
+    log_hermes("/drill", "interleaved", public_text, tok, lat)
+
+    set_session(ctx, "drill", {
+        "questions_text": public_text,
+        "drill_keys": keys,
+        "attempts": 0,
+        "started_at": datetime.utcnow().isoformat()
+    })
+
+    await send_long(update, public_text)
 
 
 async def cmd_pyq(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1206,25 +1923,38 @@ async def cmd_structure(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ================================================================
 
 async def cmd_socratic(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not check_auth(update): return
+    if not check_auth(update):
+        return
+
     topic = " ".join(ctx.args) if ctx.args else ""
     if not topic:
-        await update.message.reply_text("Usage: /socratic <topic>"); return
+        await update.message.reply_text("Usage: /socratic <topic>")
+        return
+
     await thinking(update, f"🤔 Socratic session: {topic}...")
+
     prompt = (
         f"SOCRATIC SESSION: {topic}\n\n"
-        "You are Socrates with 22 years of UPSC experience.\n"
-        "Ask ONE question. Reveal nothing.\n"
-        "The question should expose whether I understand the FOUNDATION, "
-        "not the surface facts.\n"
-        "If I answer well, go one level deeper.\n"
-        "If I answer poorly, ask the same concept differently.\n"
-        "Goal: make me BUILD the answer from first principles."
+        "Ask EXACTLY ONE foundational question.\n"
+        "Do NOT explain the topic.\n"
+        "Do NOT ask multiple questions.\n"
+        "The question must test first-principles understanding.\n"
+        "End only with the question."
     )
+
     _db_exec("INSERT INTO socratic_sessions(topic) VALUES(?)", (topic,))
     mem = get_memory_context()
     resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+
     log_hermes("/socratic", topic, resp, tok, lat)
+
+    set_session(ctx, "socratic", {
+        "topic": topic,
+        "last_prompt": resp,
+        "depth": 1,
+        "started_at": datetime.utcnow().isoformat()
+    })
+
     await send_long(update, resp)
 
 
@@ -1301,27 +2031,25 @@ async def cmd_visual(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_recall(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Stateful active recall — Phase 1: brain dump. Phase 2: gap-targeted follow-up."""
     if not check_auth(update): return
     topic = " ".join(ctx.args) if ctx.args else ""
     if not topic:
         await update.message.reply_text("Usage: /recall <topic>"); return
+    clear_session(ctx)
     await thinking(update, f"💡 Active Recall: {topic}...")
-    prompt = (
-        f"ACTIVE RECALL: {topic}\n\n"
-        "Do NOT teach. Make Gad produce.\n\n"
-        "Step 1: Ask him to write everything he knows about {topic} in 3 sentences.\n"
-        "        Tell him: 'Don't look anything up. Write from memory.'\n\n"
-        "After he responds, grade:\n"
-        "  What he got right (specific)\n"
-        "  What he missed (specific)\n"
-        "  Confidence vs accuracy gap (very important)\n"
-        "  Score: X/10\n"
-        "Then ask one follow-up to close the biggest gap."
-    )
     mem = get_memory_context()
-    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
-    log_hermes("/recall", topic, resp, tok, lat)
-    await send_long(update, resp)
+    question, key, tok, lat = await generate_recall_question(topic, mem)
+    log_hermes("/recall", topic, question, tok, lat)
+    set_session(ctx, "recall", {
+        "topic": topic,
+        "question": question,
+        "answer_key": key,
+        "phase": "dump",            # "dump" → eval+followup → "followup" → final
+        "scores": [],
+        "started_at": datetime.utcnow().isoformat(),
+    })
+    await send_long(update, f"💡 ACTIVE RECALL — {topic.upper()}\n{DIVIDER}\n\n{question}")
 
 
 async def cmd_simplify(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1348,26 +2076,26 @@ async def cmd_simplify(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_progress(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Stateful Bloom's Taxonomy Levels 1-5 — advance on pass, retry on fail."""
     if not check_auth(update): return
     topic = " ".join(ctx.args) if ctx.args else ""
     if not topic:
         await update.message.reply_text("Usage: /progress <topic>"); return
+    clear_session(ctx)
     await thinking(update, f"📈 Progressive Recall: {topic}...")
-    prompt = (
-        f"PROGRESSIVE RECALL: {topic}\n\n"
-        "DO NOT give answers. Test from bottom up.\n\n"
-        "LEVEL 1 — RECALL: 'List 3 basic facts about {topic}.'\n"
-        "LEVEL 2 — UNDERSTAND: 'Explain WHY this matters.'\n"
-        "LEVEL 3 — APPLY: 'Give a real example where this principle worked/failed.'\n"
-        "LEVEL 4 — ANALYSE: 'Compare this to [related concept].'\n"
-        "LEVEL 5 — EVALUATE: 'Critically examine this from 3 different perspectives.'\n\n"
-        "Start ONLY with Level 1. Move up when I get it right. Stay if I'm wrong.\n"
-        "Tell me which level we're at each time."
-    )
     mem = get_memory_context()
-    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
-    log_hermes("/progress", topic, resp, tok, lat)
-    await send_long(update, resp)
+    question, key, tok, lat = await generate_progress_question(topic, 1, mem)
+    log_hermes("/progress", topic, question, tok, lat)
+    set_session(ctx, "progress", {
+        "topic": topic,
+        "level": 1,
+        "question": question,
+        "answer_key": key,
+        "level_scores": [],         # one entry per level attempted
+        "retries": 0,               # retries on current level
+        "started_at": datetime.utcnow().isoformat(),
+    })
+    await send_long(update, f"📈 PROGRESSIVE RECALL — {topic.upper()}\n{DIVIDER}\n\n{question}")
 
 
 # ================================================================
@@ -1664,51 +2392,72 @@ async def cmd_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ================================================================
 
 async def cmd_daf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Stateful DAF interview — 3 rounds, hidden rubric, auto-advance angle."""
     if not check_auth(update): return
-    await thinking(update, "🎙️ Interview room...")
-    prompt = (
-        "UPSC INTERVIEW BOARD — you are the Chairman.\n\n"
-        "DAF: Sai Harsha Gadde. Data Engineer, Calgary Canada. "
-        "Telugu Literature Optional. MS degree. "
-        "Azure/Databricks/AI background. Migrated from India.\n\n"
-        "Rules:\n"
-        "- Ask ONE high-pressure question connecting his unique background to Indian governance\n"
-        "- Don't ask generic questions — ask something that ONLY makes sense for his specific profile\n"
-        "- Stay in character as Chairman\n"
-        "- After he answers: give score /10, exact flaw, and the ideal answer structure\n\n"
-        "Choose from these angles (rotate each session):\n"
-        "  a) Data governance in India — his tech background vs India's data protection laws\n"
-        "  b) Brain drain — he left India, now wants to serve it via IAS\n"
-        "  c) Telugu identity — language preservation, State of Andhra\n"
-        "  d) Canadian governance — what can India learn?\n"
-        "  e) AI ethics — his expertise + India's AI policy gaps"
-    )
+    clear_session(ctx)
+
+    # Optional angle arg: /daf tech | /daf brain_drain | /daf telugu | /daf canada | /daf ai
+    _alias = {"brain": "brain_drain", "ai": "ai_ethics", "drain": "brain_drain"}
+    raw_angle = (ctx.args[0].lower() if ctx.args else "")
+    angle = _alias.get(raw_angle, raw_angle) if raw_angle in {*_DAF_ANGLE_MAP, *_alias} else ""
+
+    await thinking(update, "🎙️ Interview board loading...")
     mem = get_memory_context()
-    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
-    log_hermes("/daf", "interview", resp, tok, lat)
-    await send_long(update, resp)
+
+    try:
+        question, key, tok, lat = await generate_daf_question(angle, mem)
+    except Exception as e:
+        log.error(f"DAF question generation failed: {e}")
+        await update.message.reply_text("⚠️ Board room unavailable. Try again.")
+        return
+
+    set_session(ctx, "daf", {
+        "question":   question,
+        "answer_key": key,
+        "angle":      key.get("angle", angle or "mixed"),
+        "round":      1,
+        "scores":     [],
+        "started_at": datetime.utcnow().isoformat(),
+    })
+
+    log_hermes("/daf", angle or "auto", question, tok, lat)
+    await send_long(update,
+        f"🎙️ INTERVIEW BOARD — Round 1/3\n{DIVIDER}\n\n"
+        f"{question}\n\n"
+        f"(Type your answer. /cancel to exit.)"
+    )
 
 
 async def cmd_mock_iq(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Full 5-question mock interview round."""
+    """Stateful 5-question mock panel — answer one at a time, graded per question."""
     if not check_auth(update): return
-    await thinking(update, "🎙️ Mock Interview — 5 questions...")
-    prompt = (
-        "MOCK INTERVIEW ROUND — 5 questions, rapid fire.\n\n"
-        "You are a panel of 5 board members. Each asks ONE question.\n"
-        "Make the questions diverse:\n"
-        "  Member 1 (Chairman): DAF-based — his Canada/Tech background\n"
-        "  Member 2 (Senior IAS): Current Affairs — connect to governance\n"
-        "  Member 3 (Academic): Telugu Literature — test optional knowledge\n"
-        "  Member 4 (Technocrat): Technology policy — his domain\n"
-        "  Member 5 (Generalist): Surprise — something completely unexpected\n\n"
-        "After ALL 5 questions, Gad will answer them one by one.\n"
-        "For now: just ask all 5. Number them clearly. Don't evaluate yet."
-    )
+    clear_session(ctx)
+
+    await thinking(update, "🎙️ Generating 5-member panel questions...")
     mem = get_memory_context()
-    resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
-    log_hermes("/mock_iq", "mock-5q", resp, tok, lat)
-    await send_long(update, resp)
+
+    try:
+        questions, keys, tok, lat = await generate_mock_iq_questions(mem)
+    except Exception as e:
+        log.error(f"Mock IQ generation failed: {e}")
+        await update.message.reply_text("⚠️ Panel generation failed. Try again.")
+        return
+
+    set_session(ctx, "mock_iq", {
+        "questions":  questions,
+        "keys":       keys,
+        "current_q":  0,
+        "scores":     [],
+        "started_at": datetime.utcnow().isoformat(),
+    })
+
+    log_hermes("/mock_iq", "5q-start", questions[0], tok, lat)
+    await send_long(update,
+        f"🎙️ MOCK INTERVIEW — 5 Questions\n{DIVIDER}\n\n"
+        f"Answer each question individually. Panel will evaluate each one.\n\n"
+        f"{questions[0]}\n\n"
+        f"(Q1/5 — Type your answer. /cancel to exit.)"
+    )
 
 
 # ================================================================
@@ -1972,9 +2721,562 @@ async def cmd_eval_log(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ================================================================
 
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not check_auth(update): return
+    if not check_auth(update):
+        return
+
     user_msg = update.message.text
-    if not user_msg: return
+    if not user_msg:
+        return
+
+    session = get_session(ctx)
+
+    # ============================================================
+    # QUIZ SESSION CONTINUATION (DETERMINISTIC)
+    # ============================================================
+    if session and session.get("mode") == "quiz":
+        await thinking(update, "🧠 Evaluating quiz answer...")
+
+        answer = normalise_mcq_answer(user_msg)
+        if answer not in {"A", "B", "C", "D"}:
+            await update.message.reply_text("Reply with A, B, C, or D.")
+            return
+
+        topic = session["data"].get("topic", "Prelims")
+        concept = session["data"].get("concept", topic)
+        key = session["data"].get("answer_key", {})
+        attempts = int(session["data"].get("attempts", 0)) + 1
+        session["data"]["attempts"] = attempts
+        touch_session(ctx)
+
+        correct_option = str(key.get("correct_option", "")).upper()
+        is_correct = (answer == correct_option)
+
+        feedback = render_quiz_feedback(answer, key, is_correct)
+
+        _db_exec(
+            "INSERT INTO quiz_history(subject,question,user_answer,was_correct,score,topic) "
+            "VALUES(?,?,?,?,?,?)",
+            (
+                topic,
+                session["data"].get("question_text", "")[:1000],
+                answer,
+                1 if is_correct else 0,
+                1.0 if is_correct else 0.0,
+                concept
+            )
+        )
+
+        if not is_correct:
+            log_weakness("Prelims", concept, "quiz")
+
+        # Generate follow-up on same concept
+        mem = get_memory_context()
+        try:
+            followup_public, followup_key, tok, lat = await generate_quiz_with_key(topic, mem, concept_hint=concept)
+            log_hermes("quiz_followup", f"{concept} | {answer}", followup_public, tok, lat)
+        except Exception as e:
+            log.error(f"quiz follow-up generation failed: {e}")
+            clear_session(ctx)
+            await send_long(update, feedback + "\n\n⚠️ Follow-up generation failed. Start again with /quiz.")
+            return
+
+        session["data"]["question_text"] = followup_public
+        session["data"]["answer_key"] = followup_key
+        session["data"]["concept"] = followup_key.get("concept", concept)
+        touch_session(ctx)
+
+        await send_long(update, feedback + "\n\nFOLLOW-UP:\n" + followup_public)
+        return
+
+    # ============================================================
+    # DRILL SESSION CONTINUATION (DETERMINISTIC)
+    # ============================================================
+    if session and session.get("mode") == "drill":
+        await thinking(update, "🧠 Grading drill...")
+
+        answers = parse_drill_answers(user_msg)
+        if set(answers.keys()) != {1, 2, 3}:
+            await update.message.reply_text(
+                "Reply with all 3 answers in one line.\n"
+                "Examples:\n"
+                "1-B 2-D 3-A\n"
+                "B D A\n"
+                "1) B, 2) D, 3) A"
+            )
+            return
+
+        drill_keys = session["data"].get("drill_keys", [])
+        session["data"]["attempts"] = int(session["data"].get("attempts", 0)) + 1
+        touch_session(ctx)
+
+        total_correct = 0
+        result_blocks = []
+        incorrect_concepts = []
+
+        for qkey in drill_keys:
+            qno = qkey["qno"]
+            user_answer = answers.get(qno, "?")
+            correct_option = qkey["correct_option"]
+            is_correct = (user_answer == correct_option)
+
+            if is_correct:
+                total_correct += 1
+            else:
+                incorrect_concepts.append({
+                    "topic": qkey.get("topic", "Prelims"),
+                    "concept": qkey.get("concept", qkey.get("topic", "General"))
+                })
+                log_weakness("Prelims", qkey.get("concept", qkey.get("topic", "General")), "drill")
+
+            _db_exec(
+                "INSERT INTO quiz_history(subject,question,user_answer,was_correct,score,topic) "
+                "VALUES(?,?,?,?,?,?)",
+                (
+                    qkey.get("topic", "Prelims"),
+                    f"Drill Q{qno}: {session['data'].get('questions_text', '')[:900]}",
+                    user_answer,
+                    1 if is_correct else 0,
+                    1.0 if is_correct else 0.0,
+                    qkey.get("concept", qkey.get("topic", "General"))
+                )
+            )
+
+            result_blocks.append(render_single_drill_result(qkey, user_answer, is_correct))
+
+        weakest_concept = None
+        if incorrect_concepts:
+            weakest_concept = incorrect_concepts[0]["concept"]
+
+        summary = (
+            f"🌪️ DRILL RESULT\n{DIVIDER}\n"
+            f"Score: {total_correct}/3\n\n"
+            + "\n\n".join(result_blocks)
+        )
+
+        if weakest_concept:
+            summary += (
+                f"\n\nWEAKEST CONCEPT TO REVISE NEXT:\n"
+                f"{weakest_concept}"
+            )
+
+            # Follow-up: auto-switch into quiz mode on weakest concept
+            mem = get_memory_context()
+            try:
+                followup_public, followup_key, tok, lat = await generate_quiz_with_key(
+                    "Prelims",
+                    mem,
+                    concept_hint=weakest_concept
+                )
+                log_hermes("drill_followup", weakest_concept, followup_public, tok, lat)
+
+                set_session(ctx, "quiz", {
+                    "topic": followup_key.get("topic", "Prelims"),
+                    "concept": followup_key.get("concept", weakest_concept),
+                    "question_text": followup_public,
+                    "answer_key": followup_key,
+                    "attempts": 0,
+                    "started_at": datetime.utcnow().isoformat()
+                })
+
+                await send_long(
+                    update,
+                    summary + "\n\nFOLLOW-UP MCQ ON YOUR WEAKEST CONCEPT:\n" + followup_public
+                )
+                return
+
+            except Exception as e:
+                log.error(f"Drill follow-up quiz generation failed: {e}")
+                clear_session(ctx)
+                await send_long(update, summary + "\n\n⚠️ Follow-up generation failed. Start again with /quiz or /drill.")
+                return
+
+        clear_session(ctx)
+        await send_long(update, summary + "\n\n✅ Drill session complete.")
+        return
+
+    # ============================================================
+    # DAF SESSION CONTINUATION (STATEFUL 3-ROUND INTERVIEW)
+    # ============================================================
+    if session and session.get("mode") == "daf":
+        await thinking(update, "🎙️ Board evaluating...")
+
+        question      = session["data"].get("question", "")
+        key           = session["data"].get("answer_key", {})
+        current_round = int(session["data"].get("round", 1))
+        scores        = list(session["data"].get("scores", []))
+
+        mem         = get_memory_context()
+        eval_prompt = build_daf_eval_prompt(question, user_msg, key)
+        eval_resp, tok, lat = await asyncio.to_thread(call_hermes, eval_prompt, mem)
+        log_hermes("daf_eval", user_msg[:200], eval_resp, tok, lat)
+
+        score_match = re.search(r'SCORE:\s*(\d+(?:\.\d+)?)\s*/\s*10', eval_resp, re.IGNORECASE)
+        score = float(score_match.group(1)) if score_match else 5.0
+        scores.append(score)
+
+        _db_exec(
+            "INSERT INTO interview_history(mode,round,angle,question,user_answer,score,feedback) "
+            "VALUES(?,?,?,?,?,?,?)",
+            ("daf", current_round, session["data"].get("angle", ""),
+             question[:1000], user_msg[:1000], score, eval_resp[:2000])
+        )
+
+        if current_round >= 3:
+            avg = sum(scores) / len(scores) if scores else 0
+            score_summary = " | ".join(f"R{i+1}: {s:.1f}/10" for i, s in enumerate(scores))
+            clear_session(ctx)
+            await send_long(update,
+                f"ROUND {current_round} EVALUATION:\n{eval_resp}\n\n"
+                f"{DIVIDER_WIDE}\n\n"
+                f"🎙️ INTERVIEW COMPLETE\n"
+                f"Scores: {score_summary}\n"
+                f"Average: {avg:.1f}/10\n\n"
+                f"Use /daf [angle] for a focused session or /mock_iq for a full panel."
+            )
+            return
+
+        # Auto-advance to next angle using follow_up_angles from the key
+        follow_ups = key.get("follow_up_angles", [])
+        next_angle_raw = follow_ups[0].lower() if follow_ups else ""
+        _fw_alias = {
+            "tech": "tech", "data": "tech", "governance": "tech",
+            "brain": "brain_drain", "drain": "brain_drain",
+            "telugu": "telugu", "language": "telugu", "linguistics": "telugu",
+            "canada": "canada", "canadian": "canada", "federalism": "canada",
+            "ai": "ai_ethics", "ethics": "ai_ethics", "artificial": "ai_ethics",
+        }
+        next_angle = ""
+        for word in next_angle_raw.split():
+            if word in _fw_alias:
+                next_angle = _fw_alias[word]
+                break
+
+        try:
+            next_q, next_key, tok2, lat2 = await generate_daf_question(next_angle, mem)
+            log_hermes("daf_next", next_angle or "auto", next_q, tok2, lat2)
+
+            session["data"]["question"]   = next_q
+            session["data"]["answer_key"] = next_key
+            session["data"]["angle"]      = next_key.get("angle", next_angle or "mixed")
+            session["data"]["round"]      = current_round + 1
+            session["data"]["scores"]     = scores
+            touch_session(ctx)
+
+            await send_long(update,
+                f"ROUND {current_round} EVALUATION:\n{eval_resp}\n\n"
+                f"{DIVIDER}\n\n"
+                f"🎙️ ROUND {current_round + 1}/3 — New angle:\n\n"
+                f"{next_q}\n\n"
+                f"(Type your answer.)"
+            )
+        except Exception as e:
+            log.error(f"DAF next question generation failed: {e}")
+            clear_session(ctx)
+            await send_long(update,
+                f"ROUND {current_round} EVALUATION:\n{eval_resp}\n\n"
+                f"⚠️ Next round generation failed. Start fresh with /daf."
+            )
+        return
+
+    # ============================================================
+    # MOCK IQ SESSION CONTINUATION (STATEFUL 5-QUESTION PANEL)
+    # ============================================================
+    if session and session.get("mode") == "mock_iq":
+        await thinking(update, "🎙️ Panel evaluating...")
+
+        questions    = session["data"].get("questions", [])
+        keys         = session["data"].get("keys", [])
+        current_q    = int(session["data"].get("current_q", 0))
+        scores       = list(session["data"].get("scores", []))
+
+        if current_q >= len(questions):
+            clear_session(ctx)
+            await update.message.reply_text("✅ Mock interview already complete.")
+            return
+
+        question = questions[current_q]
+        key      = keys[current_q] if current_q < len(keys) else {}
+        member   = key.get("member", f"Member {current_q + 1}")
+
+        mem         = get_memory_context()
+        eval_prompt = build_interview_eval_prompt(question, member, user_msg, key)
+        eval_resp, tok, lat = await asyncio.to_thread(call_hermes, eval_prompt, mem)
+        log_hermes("mock_iq_eval", user_msg[:200], eval_resp, tok, lat)
+
+        score_match = re.search(r'SCORE:\s*(\d+(?:\.\d+)?)\s*/\s*10', eval_resp, re.IGNORECASE)
+        score = float(score_match.group(1)) if score_match else 5.0
+        scores.append({"qno": current_q + 1, "member": member, "score": score})
+
+        _db_exec(
+            "INSERT INTO interview_history(mode,round,angle,question,user_answer,score,feedback) "
+            "VALUES(?,?,?,?,?,?,?)",
+            ("mock_iq", current_q + 1, member,
+             question[:1000], user_msg[:1000], score, eval_resp[:2000])
+        )
+
+        next_q = current_q + 1
+
+        if next_q >= len(questions):
+            avg = sum(s["score"] for s in scores) / len(scores) if scores else 0
+            score_lines = " | ".join(
+                f"Q{s['qno']}({s['member'][:4]}): {s['score']:.1f}" for s in scores
+            )
+            clear_session(ctx)
+            await send_long(update,
+                f"EVALUATION — {member}:\n{eval_resp}\n\n"
+                f"{DIVIDER_WIDE}\n\n"
+                f"🎙️ MOCK INTERVIEW COMPLETE\n"
+                f"Scores: {score_lines}\n"
+                f"Average: {avg:.1f}/10\n\n"
+                f"Use /daf to deep-dive any angle, or /weak to see patterns."
+            )
+            return
+
+        session["data"]["current_q"] = next_q
+        session["data"]["scores"]    = scores
+        touch_session(ctx)
+
+        next_question = questions[next_q]
+        await send_long(update,
+            f"EVALUATION — {member}:\n{eval_resp}\n\n"
+            f"{DIVIDER}\n\n"
+            f"{next_question}\n\n"
+            f"(Q{next_q + 1}/5 — Type your answer.)"
+        )
+        return
+
+    # ============================================================
+    # RECALL SESSION CONTINUATION (V1.8)
+    # ============================================================
+    if session and session.get("mode") == "recall":
+        await thinking(update, "💡 Grading your recall...")
+
+        topic       = session["data"].get("topic", "")
+        phase       = session["data"].get("phase", "dump")
+        key         = session["data"].get("answer_key", {})
+        scores      = session["data"].get("scores", [])
+
+        mem = get_memory_context()
+
+        if phase == "dump":
+            # ── Phase 1: grade the brain dump, ask targeted follow-up
+            eval_prompt = build_recall_eval_prompt(
+                topic,
+                key.get("expected_points", []),
+                key.get("trap_points", []),
+                key.get("follow_up_gap", "core mechanism"),
+                user_msg,
+            )
+            eval_resp, tok, lat = await asyncio.to_thread(call_hermes, eval_prompt, mem)
+            log_hermes("recall_eval", user_msg, eval_resp, tok, lat)
+
+            score_match = re.search(r'SCORE:\s*(\d+(?:\.\d+)?)\s*/\s*10', eval_resp, re.IGNORECASE)
+            score = float(score_match.group(1)) if score_match else 0.0
+            scores.append(score)
+
+            session["data"]["phase"] = "followup"
+            session["data"]["followup_eval"] = eval_resp
+            session["data"]["scores"] = scores
+            touch_session(ctx)
+
+            await send_long(update, eval_resp)
+            return
+
+        else:
+            # ── Phase 2: final evaluation of follow-up answer → close session
+            followup_prompt = (
+                f"RECALL SESSION FINAL — Topic: {topic}\n\n"
+                f"The student just answered the follow-up question.\n\n"
+                f"STUDENT ANSWER:\n{user_msg}\n\n"
+                "TASK:\n"
+                "1. Did they close the gap? (1-3 lines)\n"
+                "2. FINAL SCORE: X/10 (cumulative judgment)\n"
+                "3. ONE strong revision tip for this topic\n"
+                "4. End with: 'Session complete. /recall again or /progress for deeper drill.'"
+            )
+            final_resp, tok, lat = await asyncio.to_thread(call_hermes, followup_prompt, mem)
+            log_hermes("recall_final", user_msg, final_resp, tok, lat)
+
+            final_score_match = re.search(r'FINAL SCORE:\s*(\d+(?:\.\d+)?)\s*/\s*10',
+                                          final_resp, re.IGNORECASE)
+            final_score = float(final_score_match.group(1)) if final_score_match else 0.0
+            scores.append(final_score)
+
+            avg = sum(scores) / len(scores) if scores else 0.0
+            summary = f"\n\n📊 Recall avg: {avg:.1f}/10"
+            clear_session(ctx)
+            await send_long(update, final_resp + summary)
+            return
+
+    # ============================================================
+    # PROGRESS SESSION CONTINUATION (V1.8 — Bloom's Levels)
+    # ============================================================
+    if session and session.get("mode") == "progress":
+        await thinking(update, "📈 Evaluating...")
+
+        topic        = session["data"].get("topic", "")
+        level        = int(session["data"].get("level", 1))
+        question     = session["data"].get("question", "")
+        key          = session["data"].get("answer_key", {})
+        level_scores = session["data"].get("level_scores", [])
+        retries      = int(session["data"].get("retries", 0))
+
+        mem = get_memory_context()
+
+        eval_prompt = build_progress_eval_prompt(topic, level, question, user_msg, key)
+        eval_resp, tok, lat = await asyncio.to_thread(call_hermes, eval_prompt, mem)
+        log_hermes("progress_eval", user_msg, eval_resp, tok, lat)
+
+        score_match = re.search(r'SCORE:\s*(\d+(?:\.\d+)?)\s*/\s*10', eval_resp, re.IGNORECASE)
+        score = float(score_match.group(1)) if score_match else 0.0
+
+        verdict_pass = bool(re.search(r'VERDICT:\s*PASS', eval_resp, re.IGNORECASE))
+        threshold    = int(key.get("pass_threshold", 6))
+        passed       = verdict_pass or score >= threshold
+
+        level_scores.append({"level": level, "score": score, "passed": passed})
+
+        lvl_name = _BLOOM_LEVEL_NAMES.get(level, f"Level {level}")
+
+        if passed and level >= 5:
+            # ── Completed all 5 levels
+            journey = " → ".join(
+                f"L{e['level']}({e['score']:.0f})" for e in level_scores
+            )
+            summary = (
+                f"\n\n{'='*40}\n"
+                f"🏆 BLOOM'S COMPLETE — {topic.upper()}\n"
+                f"Journey: {journey}\n"
+                f"Final: {score:.1f}/10 at Level 5 (EVALUATE)\n"
+                f"{'='*40}\n"
+                f"Use /recall {topic} for another brain-dump session."
+            )
+            clear_session(ctx)
+            await send_long(update, eval_resp + summary)
+            return
+
+        if passed:
+            # ── Advance to next level
+            next_level = level + 1
+            next_q, next_key, tok2, lat2 = await generate_progress_question(topic, next_level, mem)
+            log_hermes("progress_advance", topic, next_q, tok2, lat2)
+
+            session["data"].update({
+                "level": next_level,
+                "question": next_q,
+                "answer_key": next_key,
+                "level_scores": level_scores,
+                "retries": 0,
+            })
+            touch_session(ctx)
+
+            next_name = _BLOOM_LEVEL_NAMES.get(next_level, f"Level {next_level}")
+            await send_long(
+                update,
+                eval_resp
+                + f"\n\n✅ PASS — advancing to Level {next_level}: {next_name}\n{DIVIDER}\n\n"
+                + next_q
+            )
+        else:
+            # ── Stay on same level (max 2 retries before forcing advance)
+            if retries >= 2:
+                if level < 5:
+                    next_level = level + 1
+                    next_q, next_key, tok2, lat2 = await generate_progress_question(topic, next_level, mem)
+                    log_hermes("progress_forced_advance", topic, next_q, tok2, lat2)
+                    session["data"].update({
+                        "level": next_level,
+                        "question": next_q,
+                        "answer_key": next_key,
+                        "level_scores": level_scores,
+                        "retries": 0,
+                    })
+                    touch_session(ctx)
+                    await send_long(
+                        update,
+                        eval_resp
+                        + f"\n\n⚡ 3 attempts at Level {level} — moving forward.\n{DIVIDER}\n\n"
+                        + next_q
+                    )
+                else:
+                    # forced finish
+                    clear_session(ctx)
+                    await send_long(update, eval_resp + "\n\nSession ended. Use /recall to consolidate.")
+            else:
+                # retry same level
+                retry_q, retry_key, tok2, lat2 = await generate_progress_question(topic, level, mem)
+                log_hermes("progress_retry", topic, retry_q, tok2, lat2)
+                session["data"].update({
+                    "question": retry_q,
+                    "answer_key": retry_key,
+                    "level_scores": level_scores,
+                    "retries": retries + 1,
+                })
+                touch_session(ctx)
+                await send_long(
+                    update,
+                    eval_resp
+                    + f"\n\n🔁 RETRY — Level {level}: {lvl_name} (attempt {retries + 2}/3)\n{DIVIDER}\n\n"
+                    + retry_q
+                )
+        return
+
+    # ============================================================
+    # SOCRATIC SESSION CONTINUATION
+    # ============================================================
+    if session and session.get("mode") == "socratic":
+        await thinking(update, "🤔 Going deeper...")
+
+        topic = session["data"].get("topic", "General")
+        last_prompt = session["data"].get("last_prompt", "")
+        depth = int(session["data"].get("depth", 1))
+
+        if depth >= 4:
+            prompt = (
+                "Conclude this Socratic mentoring session.\n\n"
+                f"Topic: {topic}\n"
+                f"Previous question:\n{last_prompt}\n\n"
+                f"Student answer:\n{user_msg}\n\n"
+                "Do this:\n"
+                "1) Assess understanding in 3-5 lines\n"
+                "2) Identify single biggest gap (if any)\n"
+                "3) Give 5-line synthesis\n"
+                "4) End with exactly one → Quick check question"
+            )
+
+            mem = get_memory_context()
+            resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+            log_hermes("socratic_final", user_msg, resp, tok, lat)
+            clear_session(ctx)
+            await send_long(update, resp)
+            return
+
+        prompt = (
+            "Continue active Socratic session.\n\n"
+            f"Topic: {topic}\n"
+            f"Previous question:\n{last_prompt}\n\n"
+            f"Student answer:\n{user_msg}\n\n"
+            "Rules:\n"
+            "1) Assess answer in 2-4 lines\n"
+            "2) If sound → ask ONE deeper question\n"
+            "3) If weak → correct in 2-4 lines and ask ONE simpler reformulated question\n"
+            "4) No lecture. One question only. End with the question."
+        )
+
+        mem = get_memory_context()
+        resp, tok, lat = await asyncio.to_thread(call_hermes, prompt, mem)
+        log_hermes("socratic_followup", user_msg, resp, tok, lat)
+
+        session["data"]["last_prompt"] = resp
+        session["data"]["depth"] = depth + 1
+        touch_session(ctx)
+
+        await send_long(update, resp)
+        return
+
+    # ============================================================
+    # DEFAULT FREE CHAT
+    # ============================================================
     await thinking(update)
     mem = get_memory_context()
     resp, tok, lat = await asyncio.to_thread(call_hermes, user_msg, mem)

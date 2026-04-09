@@ -91,6 +91,34 @@ if [ -f "$SYNC_SCRIPT" ]; then
     echo "  Sync script updated with --profile upsc ✓"
 fi
 
+# ── Step 10: Install Claude Code MCP server dependencies ──
+echo ""
+echo "Step 10: Installing MCP server Python dependencies..."
+echo "  (This lets Claude Code query your 80K-chunk Databricks knowledge base directly)"
+
+MCP_REQ="${VAULT_DIR}/07_Sync/mcp_requirements.txt"
+if [ -f "$MCP_REQ" ]; then
+    pip3 install -r "$MCP_REQ" --quiet
+    echo "  MCP dependencies installed ✓"
+else
+    echo "  ⚠️  mcp_requirements.txt not found — skipping"
+fi
+
+# ── Step 11: Prompt user to fill in SQL Warehouse ID ──
+echo ""
+echo "Step 11: Configure SQL Warehouse ID for MCP..."
+echo ""
+echo "  The MCP server needs your Databricks SQL Warehouse ID."
+echo "  How to find it:"
+echo "    1. Go to: Databricks → SQL Warehouses"
+echo "    2. Click your warehouse → Connection Details tab"
+echo "    3. Look at 'HTTP path' — copy the last part after /warehouses/"
+echo "    4. Open: ${VAULT_DIR}/07_Sync/sync_config.json"
+echo "    5. Replace REPLACE_WITH_YOUR_WAREHOUSE_ID with your ID"
+echo ""
+echo "  Example HTTP path: /sql/1.0/warehouses/abcd1234ef567890"
+echo "  You'd put: abcd1234ef567890"
+
 echo ""
 echo "═══════════════════════════════════════════════════════════"
 echo "  SETUP COMPLETE!"
@@ -104,6 +132,14 @@ echo "  Manual sync commands:"
 echo "    Full sync:  python3 ~/Desktop/UPSC_2026/07_Sync/sync_from_databricks.py"
 echo "    CA only:    python3 ~/Desktop/UPSC_2026/07_Sync/sync_from_databricks.py --ca-only"
 echo "    Dry run:    python3 ~/Desktop/UPSC_2026/07_Sync/sync_from_databricks.py --dry-run"
+echo ""
+echo "  Claude Code MCP (once warehouse ID is set):"
+echo "    Open Claude Code in this folder — 5 Databricks tools will be available:"
+echo "    • get_daily_summary    — check if NB6 has run"
+echo "    • get_today_stories    — today's CA stories"
+echo "    • get_traps            — search traps by topic or subject"
+echo "    • get_deep_analysis    — mains skeleton + PYQ patterns for a story"
+echo "    • search_chunks        — full-text search across 80K knowledge base"
 echo ""
 echo "  Next: Open Obsidian → Open Folder as Vault → ~/Desktop/UPSC_2026"
 echo "═══════════════════════════════════════════════════════════"

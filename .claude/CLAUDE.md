@@ -1,65 +1,56 @@
-# CLAUDE.md — UPSC 2027 AI Study System (Complete Context)
+# CLAUDE.md — UPSC 2026 AI Study System (Complete Context)
 # ═══════════════════════════════════════════════════════════
 # Share this file with Claude Code, Claude API, or any AI assistant
 # to give full context about the UPSC preparation system.
-# Last updated: 2026-04-09
+# Last updated: 2026-04-09 (Session 6 — MCP + KG + Model Strategy)
 # ═══════════════════════════════════════════════════════════
 
 ## WHO I AM
 - **UPSC CSE 2027** aspirant | **Telugu Optional** (500 marks)
-- MacBook Air (Apple Silicon) | Obsidian vault synced via GitHub
+- MacBook Air (Apple Silicon) | Obsidian vault at `~/Desktop/UPSC_2026`
 - Full AI-powered study pipeline on **Databricks** (Azure)
 - Daily routine: 4 hours morning (7-11 AM IST)
-- **Telegram bots**: Hermes (47 commands, Groq/Llama 3.3 70B) + Main Bot v2.3 (30 commands, Databricks Agent)
 
 ## THE SYSTEM ARCHITECTURE
 
 ```
-┌─────────────────────── DATABRICKS CLOUD ──────────────────────────┐
-│                                                                    │
-│  7:00 AM ─── NB6 CA Orchestrator v3.2 ────────────────────┐      │
-│              │ Gemini 2.5 Flash + google_search grounding  │      │
-│              │ → stories, story_traps                      │      │
-│              │ → deep_analysis, geography_context           │      │
-│              │ → contextual_chunks (CA daily)               │      │
-│              │ → FAISS rebuild (80,854+ vectors)            │      │
-│              │ → Obsidian CA note (.md on Volume)           │      │
-│              └─────────────────────────────────────────────┘      │
-│                                                                    │
-│  8:00 AM ─── NB7 Practice Generator ──────────────────────┐      │
-│              │ 8 AI modes via ai_query (Claude Sonnet 4)   │      │
-│              │ → Mains Q&A, KARL eval, MCQs                │      │
-│              │ → Ethics case study, Model answers           │      │
-│              │ → Telugu Optional, AI Tutor, Phone Summary   │      │
-│              └─────────────────────────────────────────────┘      │
-│                                                                    │
-│  8:30 AM ─── NB8 Audio Generator ─────────────────────────┐      │
-│              │ NotebookLM + Google Cloud TTS (WaveNet)      │      │
-│              │ → Daily CA Podcast, Deep-Dive, Revision      │      │
-│              └─────────────────────────────────────────────┘      │
-│                                                                    │
-│  9:00 AM ─── NB9 Backup & GitHub Sync ────────────────────┐      │
-│              │ Delta tables + notebooks + bot code → GitHub │      │
-│              │ Diff-based snapshot skip (MD5 hash)          │      │
-│              └─────────────────────────────────────────────┘      │
-│                                                                    │
-│  On-demand ── NB4 Examiner Agent (KARL pattern)                   │
-│               NB5 Weakness Tracker                                 │
-│               NB1-3 RAG Pipeline (ingest/embed/query)             │
-│               Morning Dashboard (14 cells + 4 AI cells)            │
-│               Telugu Optional Study System (OCR + AI)              │
-│                                                                    │
-│  Data ─────── 80,854+ chunks in Delta tables                      │
-│               FAISS IndexFlatIP (Qwen3 1024-dim)                   │
-│               10+ Delta tables in upsc_catalog.rag                 │
-│                                                                    │
-└────────────────────────────────────────────────────────────────────┘
+┌─────────────────── DATABRICKS CLOUD ────────────────────┐
+│                                                          │
+│  7:00 AM ─── NB6 CA Orchestrator v3.0 ────────────┐    │
+│              │ Perplexity sonar-pro API             │    │
+│              │ → stories, story_traps               │    │
+│              │ → deep_analysis, geography_context    │    │
+│              │ → contextual_chunks (CA daily)        │    │
+│              │ → Obsidian CA note (.md on Volume)    │    │
+│              └──────────────────────────────────────┘    │
+│                                                          │
+│  8:00 AM ─── NB7 Practice Generator ───────────────┐    │
+│              │ 6 AI modes via ai_query (Sonnet 4.6) │    │
+│              │ → Mains Q&A, KARL eval, MCQs         │    │
+│              │ → Ethics case study, Model answers    │    │
+│              │ → Telugu Optional model answers       │    │
+│              └──────────────────────────────────────┘    │
+│                                                          │
+│  On-demand ── NB4 Examiner Agent (KARL pattern)         │
+│               NB5 Weakness Tracker                       │
+│               NB1-3 RAG Pipeline (ingest/embed/query)   │
+│               Morning Dashboard (14 cells)               │
+│                                                          │
+│  Data ─────── 80,800 chunks in Delta tables             │
+│               Vector Search: upsc_knowledge_index       │
+│               (Qwen3 1024-dim, live semantic search)    │
+│               Knowledge Graph: kg_entities +            │
+│               kg_relationships (entity web)             │
+│               10 Delta tables in upsc_catalog.rag       │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
                           │
-              9:00 AM NB9 pushes to GitHub
+                    8:15 AM sync
+                    (Databricks CLI v2)
                           ▼
 ┌─────────────── MAC (OBSIDIAN VAULT) ────────────────────┐
 │                                                          │
-│  ~/Desktop/UPSC_2027/                                    │
+│  ~/Desktop/UPSC_2026/                                    │
 │  ├── .obsidian/          (config + 9 plugins + theme)    │
 │  ├── .claude/            (THIS FILE — AI context)        │
 │  ├── 00_Dashboard/       (Home.md, Weekly_Review.md)     │
@@ -70,8 +61,6 @@
 │  ├── 05_Revision/        (Due_Today.md, spaced rep)      │
 │  ├── 06_Answer_Practice/ (GS1-4, Essay, KARL_Scores)     │
 │  ├── 07_Sync/            (sync script, launchd plist)    │
-│  ├── Daily_Practice/     (8 modes output per day)        │
-│  ├── data_snapshots/     (daily Delta table JSON dumps)  │
 │  └── Templates/          (4 templates for notes)         │
 │                                                          │
 │  Plugins: Dataview, Calendar, Spaced Repetition,         │
@@ -82,25 +71,22 @@
 └──────────────────────────────────────────────────────────┘
 ```
 
-## DATABRICKS NOTEBOOKS (10 total)
+## DATABRICKS NOTEBOOKS (7 total)
 
 | ID | Name | Schedule | Purpose |
 |----|------|----------|---------|
-| 4264351243244281 | NB1-3 RAG Pipeline | On-demand | PDF ingest → chunking → embedding → FAISS index |
+| 4264351243244281 | NB1-3 RAG Pipeline | On-demand | PDF ingest → chunking → embedding → VS index |
 | 2480902325137437 | NB4 Examiner Agent v2 | On-demand | KARL-pattern answer evaluation (weighted nuggets) |
 | 2480902325137438 | NB5 Weakness Tracker | On-demand | Subject performance, missed nuggets, study plan |
-| 3121042200670064 | NB6 CA Orchestrator v3.2 | 7 AM IST daily | Gemini 2.5 Flash → stories → traps → deep analysis → FAISS → Obsidian |
-| 3121042200670073 | NB7 Practice Generator | 8 AM IST daily | 8 AI practice modes (Q&A, KARL, MCQ, Ethics, Model Answers, Telugu, Tutor, Phone) |
-| — | NB8 Audio Generator | 8:30 AM IST daily | NotebookLM + Google Cloud TTS → podcasts + revision briefs |
-| — | NB9 Backup & GitHub Sync | 9:00 AM IST daily | Delta tables + notebooks + bot code → GitHub (diff-based skip) |
+| 3121042200670064 | NB6 CA Orchestrator v3.0 | 7 AM IST daily | Perplexity → stories → traps → deep analysis → Obsidian |
+| 3121042200670073 | NB7 Practice Generator | 8 AM IST daily | 6 AI practice modes (Q&A, KARL, MCQ, Ethics, Model Answers, Telugu) |
 | 3121042200670066 | Morning Dashboard | On-demand | 14-cell visual summary of pipeline + 4 AI cells |
-| 138096049883218 | Telugu Optional Study System | On-demand | OCR pipeline + AI study cells for Telugu literature |
-| — | Hermes Bot Patch | On-demand | Bot deployment and patching utilities |
+| 138096049883218 | Telugu Optional Study System | On-demand | OCR pipeline + AI study cells |
 
 ## DELTA TABLES (upsc_catalog.rag.*)
 
 ### stories
-Daily CA stories from Gemini 2.5 Flash (with google_search grounding).
+Daily CA stories from Perplexity.
 ```
 date STRING, story_id STRING, slug STRING, title STRING,
 priority STRING (CRITICAL/HIGH/MEDIUM/LOW),
@@ -141,7 +127,7 @@ run_date STRING, generated_at STRING, raw_output STRING,
 parsed_json STRING, story_count INT, schema_version STRING
 ```
 
-### contextual_chunks (80,854+ rows)
+### contextual_chunks (80,800 rows)
 The knowledge base — all textbook/PYQ/CA content chunked and contextualized.
 ```
 chunk_id STRING, source_file STRING, subject STRING,
@@ -151,8 +137,8 @@ context_header STRING, token_count INT,
 ingested_at TIMESTAMP, doc_type STRING, exam_stage STRING
 ```
 
-### embedded_chunks (80,854+ rows)
-Same chunks with Qwen3 embeddings for FAISS vector search.
+### embedded_chunks (80,800 rows)
+Same chunks with Qwen3 embeddings for vector search.
 ```
 chunk_id STRING, text STRING, subject STRING,
 source_file STRING, page_number INT, token_count INT,
@@ -166,7 +152,98 @@ theme STRING, frequency INT, story_ids STRING,
 essay_title STRING, week_date STRING
 ```
 
-## KNOWLEDGE BASE — 80,854+ CHUNKS
+### kg_entities
+Knowledge Graph — all UPSC-relevant entities extracted from the knowledge base.
+```
+entity_id STRING, entity_name STRING, entity_type STRING,
+description STRING, source_chunks STRING (JSON array)
+```
+Query: `SELECT entity_name, entity_type, description FROM upsc_catalog.rag.kg_entities ORDER BY entity_name`
+
+### kg_relationships
+Knowledge Graph — directed relationships between entities (for cross-paper interlinking).
+```
+relationship_id STRING, source_entity_id STRING, target_entity_id STRING,
+relationship_type STRING, context STRING, strength FLOAT
+```
+Query: `SELECT e1.entity_name, r.relationship_type, e2.entity_name FROM kg_relationships r JOIN kg_entities e1 ON r.source_entity_id=e1.entity_id JOIN kg_entities e2 ON r.target_entity_id=e2.entity_id WHERE e1.entity_name LIKE '%Article 21%'`
+
+### Vector Search Index
+- **Index name**: `upsc_catalog.rag.upsc_knowledge_index`
+- **Columns**: chunk_id, text, subject, source_file
+- **Embedding model**: Qwen3 0.6B (1024-dim)
+- **Usage in notebooks**: Via `requests.post(f"{HOST}/api/2.0/vector-search/indexes/upsc_catalog.rag.upsc_knowledge_index/query", ...)`
+- **Usage via MCP**: `search_chunks("query text", subject="Polity")` tool in Claude Code
+
+## AI MODEL STRATEGY
+
+| Component | Model | Why |
+|---|---|---|
+| NB6 CA Pipeline (7 AM) | **Claude Opus 4.6** (`databricks-claude-opus-4-6`) | Deep 2-pass reasoning, 1M context |
+| NB7 Practice Generator (8 AM) | **Claude Sonnet 4.6** (`databricks-claude-sonnet-4-6`) | 90% Opus quality, 3x cheaper |
+| Morning Dashboard AI cells | Sonnet 4.6 | Fast interactive queries |
+| Obsidian Copilot (chat with notes) | Opus 4.6 for review, Sonnet for daily | 1M context for vault analysis |
+| CLI ad-hoc queries | Sonnet 4.6 | Default for interactive use |
+| Claude Code (this session) | Claude Sonnet 4.6 (Pro) | Local, no DBU cost |
+| Embeddings | Qwen3 0.6B | 1024-dim multilingual |
+
+**Pricing** (DBU/1M tokens): Sonnet 4.6 = 43 input / 214 output · Opus 4.6 = 143 input / 536 output
+
+## MCP SERVERS (Claude Code ↔ Databricks Integration)
+
+Claude Code in this vault has 2 MCP server layers wired up in `.claude/settings.local.json`:
+
+### Layer 1 — Databricks Native MCP (via CLI)
+Start with: `databricks mcp start --profile upsc`
+Provides SQL execution, Unity Catalog browsing, Vector Search, MLflow.
+```bash
+# Test it:
+databricks mcp start --profile upsc
+# Then in Claude Code — ask naturally:
+# "Query today's stories from upsc_catalog.rag.stories"
+# "Search the knowledge graph for Article 21 connections"
+```
+
+### Layer 2 — Custom Study MCP (`07_Sync/mcp_databricks_server.py`)
+5 UPSC-specific tools wired directly to your study workflow:
+| Tool | What |
+|---|---|
+| `get_daily_summary` | Pipeline status (did NB6 run? how many stories?) |
+| `get_today_stories` | Today's CA with priority + GS paper mapping |
+| `get_traps` | Search traps by topic or subject |
+| `get_deep_analysis` | Mains skeleton + PYQ patterns for a story |
+| `search_chunks` | Full-text search across 80,800 KB chunks |
+
+**One-time setup** (on Mac):
+```bash
+pip install -r ~/Desktop/UPSC_2026/07_Sync/mcp_requirements.txt
+# Then fill sql_warehouse_id in 07_Sync/sync_config.json
+# Databricks → SQL Warehouses → your warehouse → Connection Details → HTTP path last segment
+```
+
+## OBSIDIAN COPILOT SETUP (Chat with Your Vault Notes)
+
+Install once, then `Cmd+Shift+C` to open Claude chat inside Obsidian:
+
+1. **Install plugin**: Settings → Community Plugins → Browse → "Copilot" by Logan Yang
+2. **Add custom model**: Settings → Copilot → Add Custom Model
+   - Provider: `OpenAI-compatible`
+   - Base URL: `https://adb-7405615460529826.6.azuredatabricks.net/serving-endpoints`
+   - API Key: your Databricks PAT (`dapi-...`)
+   - Model: `databricks-claude-opus-4-6` (for deep work) or `databricks-claude-sonnet-4-6`
+3. **Enable**: "Use active note as context" (ON) · Temperature: 0.3 · Max tokens: 2000
+4. **System prompt**: `You are a UPSC CSE 2027 expert tutor. Be precise, cite Article numbers, case laws, and specific facts.`
+
+**Starter prompts** (type in Copilot chat with your CA note open):
+```
+Summarize this CA note for GS2 Mains in 150 words
+What Prelims MCQs can be framed from this note?
+Create 5 flashcards (#card format for spaced repetition)
+Frame a GS4 Ethics case study from this story
+What would Ambedkar, Gandhi, and Kalam say about this?
+```
+
+## KNOWLEDGE BASE — 80,800 CHUNKS
 
 | Subject | Chunks | Sources |
 |---------|--------|---------|
@@ -184,7 +261,7 @@ essay_title STRING, week_date STRING
 | Agriculture | 1,077 | Agriculture Prelims PYQs, Major Crops CSN, Major-Crops-PMF |
 | International Relations | 997 | Redbook IR, IR Mind Maps, Prelims Magnum IR Places-in-News, NCERT |
 | Society | 940 | Redbook Society, Health/Education/HR, PYQ answers, NCERTs |
-| Current Affairs | 768+ | Indian Express x4, Dec2025 NewsClips, NB6 daily notes (growing daily) |
+| Current Affairs | 768 | Indian Express x4, Dec2025 NewsClips, NB6 daily notes |
 | Strategy | 525 | Anudeep Durishetty AIR 1 writing strategies |
 | Disaster Management | 218 | Disaster.pdf, Redbook Disaster Management |
 | Syllabus | 175 | UPSC syllabus docs |
@@ -201,45 +278,52 @@ essay_title STRING, week_date STRING
 |---------------|--------|---------|
 | కవిత్రయం (Nannaya/Tikkana/Errana) | ✅ Excellent | Multiple texts + MemoryLines fresh 2026 Tikkana Udyoga Parvam |
 | ప్రబంధ యుగం (Srinatha/Peddana) | ✅ Good | Gunanidi Srinathudu, Sarada Lekhalu, కర్పూర వసంతరాయలు |
-| ఆధునిక సాహిత్యం (Modern) | ✅ Good | మహాప్రస్థానం (Sri Sri), గబ్బిలం, అల్పజీవి, MemoryLines |
-| వ్యాకరణం & ఛందస్సు (Prosody) | ✅ Filled | MemoryLines (Kanda Padyamu, Meters, Sabdalamkara) |
-| భాషా చరిత్ర (Language History) | ✅ Excellent | 5 different histories |
-| సాహిత్య చరిత్ర (Literary History) | ✅ Excellent | Andhra Kavula Charitramu (576 chunks) |
+| ఆధునిక సాహిత్యం (Modern) | ✅ Good | మహాప్రస్థానం (Sri Sri), గబ్బిలం, అల్పజీవి, MemoryLines Jashuva/Devulapalli/Atreya |
+| వ్యాకరణం & ఛందస్సు (Prosody) | ✅ Filled | 5 chunks from MemoryLines (Kanda Padyamu, Meters, Sabdalamkara) |
+| భాషా చరిత్ర (Language History) | ✅ Excellent | 5 different histories (పింగళి, వెలమల x2, దివాకర్ల, భద్రిరాజు) |
+| సాహిత్య చరిత్ర (Literary History) | ✅ Excellent | Andhra Kavula Charitramu (576 chunks), multiple histories |
 | శతకములు (Satakamulu) | ✅ Good | MemoryLines Sumati, Dasarathi, Choudappa, Bhaskara |
 | గాథా సప్తశతి | ✅ Good | 5 gems with analysis from MemoryLines |
 | PYQ model answers | ✅ Good | 736+ chunks |
 | Paper 2 prescribed texts | ⚠️ Could improve | Need more actual prescribed text editions |
 
-## 8 PRACTICE MODES (NB7 — Daily 8 AM IST)
+## 6 PRACTICE MODES (NB7 — Daily 8 AM IST)
 
 | # | Mode | Input | Output |
 |---|------|-------|--------|
-| 1 | **Knowledge Q&A** | Top CA story + 80K+ textbook chunks | 15-mark Mains answer with Article citations |
+| 1 | **Knowledge Q&A** | Top CA story + 80K textbook chunks | 15-mark Mains answer with Article citations |
 | 2 | **KARL Answer Evaluation** | Today's CA chunks | Auto question → sample answer → strict scoring → model answer |
 | 3 | **Prelims MCQs** | Stories + story_traps | 5 MCQs with trap-based wrong options |
 | 4 | **Ethics Case Study (GS4)** | CA stories + Ethics 1,111 chunks | Stakeholder map → thinkers → dilemma → model answer |
 | 5 | **Mains Model Answers** | deep_analysis + geography + traps | Cross-subject map → structured answers → textbook anchors |
 | 6 | **Telugu Optional (P1 & P2)** | 8,518 Telugu chunks (PYQ + textbooks) | 5 PYQ model answers → approach + తెలుగు సాహిత్య పదాలు + scoring tips |
-| 7 | **AI Tutor Brief** | Stories + traps + deep_analysis | 5-min tutor session: practice answer + memory hooks + revision plan |
-| 8 | **Phone Summary** | Modes 1, 5, 7 outputs | 2-3 min emoji-formatted quick read → saved to Obsidian vault |
 
 ## OBSIDIAN VAULT STRUCTURE
 
 ```
-~/Desktop/UPSC_2027/  (also GitHub: GaddeSaiHarsha/UPSC_2027)
+~/Desktop/UPSC_2026/
 ├── .obsidian/                    # Vault config + plugins
 │   ├── plugins/                  # 9 community plugins
+│   │   ├── dataview/             # Query notes like SQL
+│   │   ├── calendar/             # Sidebar calendar
+│   │   ├── obsidian-spaced-repetition/  # Flashcard SM-2
+│   │   ├── templater-obsidian/   # Dynamic templates
+│   │   ├── obsidian-kanban/      # Study tracking boards
+│   │   ├── obsidian-heatmap-calendar/   # Streak tracker
+│   │   ├── obsidian-style-settings/     # Theme customization
+│   │   ├── omnisearch/           # Full-text search
+│   │   └── obsidian-excalidraw-plugin/  # Diagrams
 │   └── themes/Minimal/          # Clean dark theme
 │
 ├── .claude/CLAUDE.md             # THIS FILE (AI context)
 │
 ├── 00_Dashboard/
-│   ├── Home.md                   # Command center (80,854+ chunks, pipeline status)
+│   ├── Home.md                   # Command center (80,800 chunks, pipeline status)
 │   └── Weekly_Review.md          # Weekly stats template
 │
 ├── 01_Current_Affairs/
 │   ├── CA_Master_Index.md        # Index of all CA notes
-│   └── 2026/                     # Auto-generated by NB6
+│   └── 2026/03-March/            # Auto-generated by NB6
 │
 ├── 02_Subjects/                  # One folder per subject
 │   ├── Economy/ Environment/ Ethics/ Geography/
@@ -251,10 +335,6 @@ essay_title STRING, week_date STRING
 ├── 05_Revision/                  # Due_Today.md (spaced repetition)
 ├── 06_Answer_Practice/           # GS1-4, Essay, KARL_Scores.md
 ├── 07_Sync/                      # sync script + launchd plist
-├── Daily_Practice/               # 8 modes output per day (from NB7)
-├── data_snapshots/               # Daily Delta table JSON backups (from NB9)
-├── notebooks/                    # Databricks notebook source (.py)
-├── bot_code/                     # Telegram bot source (hermes_full.py, upsc_telegram_bot_v23.py)
 └── Templates/                    # 4 templates
 ```
 
@@ -306,32 +386,32 @@ Use Topic_Note template, check Trap_Index, create in correct subject folder
 <private>
 - **Host**: https://adb-7405615460529826.6.azuredatabricks.net
 - **CLI Profile**: `upsc` (Databricks CLI v2 via Homebrew)
+- **SQL Warehouse ID**: `589dccbdf8c6e4c9` (locked in sync_config.json)
 - **Volume**: `dbfs:/Volumes/upsc_catalog/rag/obsidian_ca/UPSC_2026/`
 - **IMPORTANT**: CLI needs `dbfs:` prefix for Volume paths
-- **Sync**: `databricks --profile upsc fs cp -r dbfs:/Volumes/upsc_catalog/rag/obsidian_ca/UPSC_2026/ ~/Desktop/UPSC_2027/ --overwrite`
-- **Secrets scope**: `upsc-bot-secrets` (15 secrets: google-ai-key, groq-api-key, github-pat, hermes-bot-token, main-bot-token, telegram-user-id, etc.)
+- **Sync**: `databricks --profile upsc fs cp -r dbfs:/Volumes/upsc_catalog/rag/obsidian_ca/UPSC_2026/ ~/Desktop/UPSC_2026/ --overwrite`
+- **Vault path (Mac)**: `~/Desktop/UPSC_2026`
+- **Vault path (Linux/Codespace)**: `/home/$USER/UPSC_2026`
+- **Hermes memory DB**: `/home/$USER/UPSC_2026/.upsc_memory.db`
+- **Telegram User ID**: `2022402970`
 </private>
 
 ## DAILY PIPELINE TIMELINE
 
 ```
-07:00 IST  NB6 runs → Gemini 2.5 Flash + google_search → 3-5 stories
+07:00 IST  NB6 runs → Perplexity API → 4-6 stories
 07:01      stories, story_traps, deep_analysis, geography_context updated
 07:05      CA note written to Volume: CA_YYYY-MM-DD.md
 07:06      contextual_chunks: CA text chunked + embedded
-07:08      FAISS rebuild: IndexFlatIP from 80,854+ vectors
            ──────────────────────────────────
-08:00 IST  NB7 runs → ai_query (Claude Sonnet 4) → 8 modes
+08:00 IST  NB7 runs → ai_query (Sonnet 4.6) → 6 modes
 08:01-05   Modes 1-5: Q&A, KARL, MCQs, Ethics, Model Answers
 08:06      Mode 6: Telugu Optional model answers
-08:07      Mode 7: AI Tutor Brief (practice + memory hooks)
-08:08      Mode 8: Phone Summary (emoji-formatted quick read)
            ──────────────────────────────────
-08:30 IST  NB8 runs → NotebookLM/TTS → podcast + revision brief
+08:15 IST  launchd syncs vault to Mac
+08:16      Obsidian auto-refreshes (new CA note appears)
            ──────────────────────────────────
-09:00 IST  NB9 runs → GitHub sync (notebooks, bot code, vault, snapshots)
-           ──────────────────────────────────
-09:30+     YOU: Open Obsidian → read CA → review traps → practice
+08:30      YOU: Open Obsidian → read CA → review traps → practice
 ```
 
 ## RULES FOR AI ASSISTANTS
@@ -344,7 +424,7 @@ Use Topic_Note template, check Trap_Index, create in correct subject folder
 7. Be STRICT in evaluations — max ~65% (9.5/15) is excellent
 8. Use the 5 trap types consistently
 9. Cross-reference with static anchors (textbook chapters)
-10. Prioritize remaining gaps: Agriculture depth, Internal Security, Disaster Management
+10. Prioritize remaining gaps: Agriculture depth, Internal Security
 
 ## HOW TO HELP ME STUDY
 
@@ -355,24 +435,22 @@ Use Topic_Note template, check Trap_Index, create in correct subject folder
 4. Tell me which textbook chapter this connects to
 
 ### My current weak areas (update weekly):
-- Agriculture — light coverage (1,077 chunks), need dedicated textbook
+- Agriculture — light coverage, need textbook depth
 - Internal Security — minimal (45 chunks), need Ashok Kumar
-- Disaster Management — could add NDMA guidelines
+- Answer writing — started, need 10+ evaluations to activate Weakness Tracker
 - Telugu Paper 2 prescribed texts — could use more dedicated text editions
-- Answer writing — need more evaluations to activate Weakness Tracker
 
 ### Daily routine:
 - 7 AM: NB6 runs (CA note appears in 01_Current_Affairs/)
-- 8 AM: NB7 runs (8 practice modes including Telugu Optional)
-- 8:30 AM: NB8 runs (podcast + audio briefs)
-- 9 AM: NB9 runs (GitHub sync — vault auto-updates)
-- 9:30 AM: Open Obsidian → read CA → review traps → practice → listen to podcast
+- 8 AM: NB7 runs (6 practice modes + Telugu Optional)
+- 8:15 AM: Vault auto-syncs to Mac
+- 8:30 AM: I open Claude Code here and review the note
 - Then: write 1 answer in 06_Answer_Practice/, evaluate in NB4
 
 ### Current Exam Timeline:
 - Target: UPSC CSE 2027
-- Prelims: ~May 2027 (~13 months away) → focus breadth
-- Mains: ~Sep 2027 (~17 months) → start answer writing now
+- Prelims: ~May 2027 (14 months away) → focus breadth
+- Mains: ~Sep 2027 (18 months) → start answer writing now
 - Optional: Telugu Literature (500 marks) → 8,518 chunks ready
 
 ## TUTOR MODE — HOW TO TEACH ME
@@ -429,172 +507,3 @@ mem-search: what traps did I flag in the last 5 sessions?
 mem-search: Telugu optional session errors and weak areas
 mem-search: which prelims MCQ topics had wrong answers?
 ```
-
----
-
-## CLAUDE PROJECT — UPSC HERMES MENTOR ROLE
-
-> Use this section as the **system prompt** when setting up a Claude Project dedicated
-> to UPSC 2027 preparation. Paste it verbatim into the "Project Instructions" field.
-
----
-
-### Role & Identity
-
-You are **"UPSC Hermes Mentor"**, an advanced research, pedagogy, and strategy agent
-dedicated exclusively to helping me crack **UPSC Civil Services Examination 2027**.
-
-You have **full and persistent understanding** of my project repository:
-
-**GitHub Repo:** https://github.com/GaddeSaiHarsha/UPSC_2027.git
-
-This repository contains:
-- Daily **current affairs consolidations**
-- Data sourced from **Databricks Unity Catalog (UC) tables**
-- Extracted via a **Hermes agent (Python script)**
-- Delivered through a **Telegram bot (command-based)**
-- Synced continuously to GitHub (public repo)
-
-Treat this repo as the **single source of truth** for my preparation.
-
----
-
-### Core Objectives
-
-Your mission is to transform **raw daily current affairs data** into a **highly strategic,
-UPSC-ready learning system**.
-
-For **every day's content** that I paste or that exists in the repository, you must:
-
-1. **Explain everything with 100% conceptual clarity**
-2. **Map content directly to UPSC syllabus & PYQs**
-3. **Convert information into exam-relevant insights**
-4. **Train me like a serious 2027 aspirant (Prelims + Mains + Interview)**
-
----
-
-### Daily Processing Framework (MANDATORY)
-
-Whenever I paste daily content or refer to a day's data, follow this structure
-**without skipping any step**:
-
-#### Step 1 — Big Picture First
-- Why this topic matters nationally & internationally
-- Long-term relevance (5–10 years)
-- Governance, constitutional, economic, ethical, or geopolitical angle
-
-#### Step 2 — UPSC Syllabus Mapping
-Explicitly map each item to:
-- GS Paper (I / II / III / IV)
-- Prelims (Static vs Current linkage)
-- Optional relevance (Telugu Literature, if any)
-- Essay themes
-
-#### Step 3 — Static + Current Integration
-- Link current affairs to **NCERTs, standard books, and core concepts**
-- Mention which static area I must revise alongside this topic
-
-#### Step 4 — Prelims Lens
-- Possible **MCQ traps** (cross-reference `04_Traps/` in the vault)
-- Keywords UPSC may twist
-- Factual vs analytical importance
-- "What NOT to over-memorize"
-
-#### Step 5 — Mains Lens
-- 10 / 15 / 20 marker question potential
-- Answer structure guidance (Intro–Body–Conclusion)
-- Diagrams / flowcharts / data points I can use
-
-#### Step 6 — Interview (Personality Test) Angle
-- Opinion-based questions UPSC may ask
-- Balanced, constitutional, ethical viewpoints
-
----
-
-### Advanced Enhancements (VERY IMPORTANT)
-
-You must also:
-
-- Generate **value-added notes** (definitions, examples, case studies)
-- Highlight **interlinkages** between multiple topics
-- Flag **high-priority vs low-priority** areas
-- Suggest **revision frequency** (weekly / monthly)
-- Convert insights into **ready-to-use notes** (compatible with Obsidian vault structure)
-
----
-
-### Knowledge Output Formats
-
-Depending on context, produce output in one of these formats:
-
-| Format | When to Use |
-|--------|-------------|
-| 📘 Detailed written explanation | Deep-dive teaching sessions |
-| 🌐 HTML-style structured content | Headings, tables, collapsible sections |
-| 🧠 Mind-map style breakdown (textual) | Topic overviews and interlinkages |
-| 📝 Answer-ready content | Mains / Essay practice |
-| 📊 Comparative table | Schemes, Acts, Constitutional articles |
-| 🔁 Revision checklist | Weekly / monthly review |
-
-Always optimize for **clarity and recall**.
-
----
-
-### UPSC Mentor Mode (ALWAYS ON)
-
-In addition to academics, actively act as my mentor:
-
-- Give **daily or contextual motivation** (no fluff — substance only)
-- Share **exam temperament advice**
-- Warn against common UPSC preparation mistakes
-- Suggest **strategy changes as 2027 approaches**
-- Keep answers **realistic, disciplined, and no-fluff**
-
-You are strict, honest, and exam-oriented — never motivational without substance.
-
----
-
-### System & Repo Awareness
-
-You must demonstrate:
-- Understanding of **Databricks + Unity Catalog tables** (`upsc_catalog.rag.*`)
-- Awareness of **Python-based Hermes agent** (`bot_code/hermes_full.py`)
-- Knowledge of **Telegram bot delivery** (command-based, Groq Llama 3.3 70B backend)
-- Respect for **GitHub-based versioned learning** (`data_snapshots/`, daily push via NB9)
-- Ability to suggest **automation improvements** conceptually
-
-Relevant table schemas are documented in the **DELTA TABLES** section above.
-
----
-
-### Tone & Style Guidelines
-
-- UPSC-focused, not generic
-- Deep but simple explanations
-- No unnecessary verbosity
-- No hallucinations or assumptions — if data is unavailable, say so clearly
-- Always think like a **rank-producing mentor**
-- End every teaching response with: `→ Quick check: [one sharp question]`
-
----
-
-### Long-Term Memory Instruction
-
-Treat this project as:
-> **My single, long-term UPSC knowledge system until 2027**
-
-Maintain continuity across days, themes, and revisions. Cross-reference:
-- `01_Current_Affairs/` — daily CA notes
-- `03_PYQs/` — past year questions
-- `04_Traps/` — known exam traps
-- `05_Revision/` — spaced repetition queue
-- `06_Answer_Practice/` — evaluated answers and KARL scores
-
----
-
-### Optional Power Commands (add to Claude Project)
-
-- "Give me a **30-second revision summary** at the end"
-- "Create **Prelims-only flash bullets**"
-- "Assume I've read NCERTs once"
-- "Be stricter and reduce content volume"
