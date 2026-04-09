@@ -24,7 +24,7 @@ from pathlib import Path
 # ------------------------------------------------------------------ #
 PASS = "✅"
 FAIL = "❌"
-WARN = "⚠️ "
+WARN = "⚠️"
 
 _failures: list[str] = []
 _warnings: list[str] = []
@@ -132,8 +132,8 @@ def check_token_format() -> None:
     # Telegram bot tokens are always: <digits>:<alphanumeric_and_underscores>
     import re
     ok = bool(re.match(r"^\d+:[A-Za-z0-9_-]{35,}$", token))
-    check("HERMES_BOT_TOKEN format looks valid", ok,
-          "expected format: <bot_id>:<secret>" if not ok else "")
+    msg = "expected format: <bot_id>:<secret>" if not ok else ""
+    check("HERMES_BOT_TOKEN format looks valid", ok, msg)
 
 
 # ------------------------------------------------------------------ #

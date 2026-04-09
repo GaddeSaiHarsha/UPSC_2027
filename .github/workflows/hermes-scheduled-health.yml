@@ -19,6 +19,8 @@ jobs:
   health-check:
     name: Hermes Health Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -97,7 +99,7 @@ jobs:
 
           token = os.environ["HERMES_BOT_TOKEN"]
           chat_id = os.environ["TELEGRAM_USER_ID"]
-          now = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+          now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
           msg = (
               f"✅ *Hermes Health Check Passed*\n"
