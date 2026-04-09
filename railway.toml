@@ -1,0 +1,7 @@
+[build]
+builder = "nixpacks"
+buildCommand = "pip install -r bot_code/requirements.txt"
+
+[deploy]
+startCommand = "python bot_code/hermes_full.py"
+restartPolicyType = "always"
