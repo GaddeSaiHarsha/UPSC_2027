@@ -621,3 +621,4 @@ This Claude Project understands:
 - **NB6→NB7→NB8→NB9 pipeline** — fully automated 7–9 AM IST, diff-based deduplication
 - **Gemini 2.5 Flash** — current CA fetcher in NB6 (switched from Perplexity on 2026-04-05)
 - **databricks-claude-sonnet-4** — LLM for all 8 NB7 practice modes via `ai_query()`
+..
