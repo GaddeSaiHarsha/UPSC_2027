@@ -1,0 +1,116 @@
+name: Hermes Scheduled Health Check
+
+on:
+  schedule:
+    # Runs every day at 03:30 UTC (09:00 IST) — after Databricks NB9 completes
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+    inputs:
+      send_telegram_heartbeat:
+        description: "Send Telegram heartbeat message on success"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  health-check:
+    name: Hermes Health Check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --quiet groq python-telegram-bot requests
+
+      - name: Verify required secrets are present
+        run: |
+          echo "Checking required GitHub Actions secrets ..."
+          MISSING=0
+
+          if [ -z "$HERMES_BOT_TOKEN" ]; then
+            echo "❌ HERMES_BOT_TOKEN is not set"
+            MISSING=$((MISSING+1))
+          else
+            echo "✅ HERMES_BOT_TOKEN is set"
+          fi
+
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "❌ GROQ_API_KEY is not set"
+            MISSING=$((MISSING+1))
+          else
+            echo "✅ GROQ_API_KEY is set"
+          fi
+
+          if [ -z "$TELEGRAM_USER_ID" ]; then
+            echo "⚠️  TELEGRAM_USER_ID is not set (optional, but needed for heartbeat)"
+          else
+            echo "✅ TELEGRAM_USER_ID is set"
+          fi
+
+          if [ "$MISSING" -gt 0 ]; then
+            echo ""
+            echo "❌ $MISSING required secret(s) missing. See docs/HERMES_ACTIONS_GUIDE.md"
+            exit 1
+          fi
+          echo ""
+          echo "✅ All required secrets present"
+        env:
+          HERMES_BOT_TOKEN: ${{ secrets.HERMES_BOT_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TELEGRAM_USER_ID: ${{ secrets.TELEGRAM_USER_ID }}
+
+      - name: Run health check script
+        env:
+          HERMES_BOT_TOKEN: ${{ secrets.HERMES_BOT_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TELEGRAM_USER_ID: ${{ secrets.TELEGRAM_USER_ID }}
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DATABRICKS_SQL_WAREHOUSE_ID: ${{ secrets.DATABRICKS_SQL_WAREHOUSE_ID }}
+        run: |
+          echo "Running Hermes health check ..."
+          python scripts/hermes_healthcheck.py
+
+      - name: Send Telegram heartbeat (optional)
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.send_telegram_heartbeat == 'true') || github.event_name == 'schedule' }}
+        env:
+          HERMES_BOT_TOKEN: ${{ secrets.HERMES_BOT_TOKEN }}
+          TELEGRAM_USER_ID: ${{ secrets.TELEGRAM_USER_ID }}
+        run: |
+          if [ -z "$HERMES_BOT_TOKEN" ] || [ -z "$TELEGRAM_USER_ID" ]; then
+            echo "⚠️  Skipping heartbeat — HERMES_BOT_TOKEN or TELEGRAM_USER_ID not set"
+            exit 0
+          fi
+          python - <<'EOF'
+          import os, requests, datetime
+
+          token = os.environ["HERMES_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_USER_ID"]
+          now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+          msg = (
+              f"✅ *Hermes Health Check Passed*\n"
+              f"Time: {now}\n"
+              f"Bot code: syntax OK, imports OK\n"
+              f"Status: all checks green 🟢"
+          )
+          url = f"https://api.telegram.org/bot{token}/sendMessage"
+          resp = requests.post(url, json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"}, timeout=10)
+          if resp.ok:
+              print("✅ Telegram heartbeat sent")
+          else:
+              print(f"⚠️  Telegram send failed: {resp.status_code} {resp.text}")
+          EOF
