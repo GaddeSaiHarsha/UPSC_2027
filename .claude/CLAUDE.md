@@ -206,6 +206,7 @@ essay_title STRING, week_date STRING
 | భాషా చరిత్ర (Language History) | ✅ Excellent | 5 different histories |
 | సాహిత్య చరిత్ర (Literary History) | ✅ Excellent | Andhra Kavula Charitramu (576 chunks) |
 | శతకములు (Satakamulu) | ✅ Good | MemoryLines Sumati, Dasarathi, Choudappa, Bhaskara |
+| గాథా సప్తశతి | ✅ Good | 5 gems with analysis from MemoryLines |
 | PYQ model answers | ✅ Good | 736+ chunks |
 | Paper 2 prescribed texts | ⚠️ Could improve | Need more actual prescribed text editions |
 
