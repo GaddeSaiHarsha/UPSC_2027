@@ -1,0 +1,67 @@
+name: Hermes CI
+
+on:
+  push:
+    branches: ["main", "copilot/**"]
+    paths:
+      - "bot_code/**"
+      - "scripts/**"
+      - ".github/workflows/**"
+  pull_request:
+    paths:
+      - "bot_code/**"
+      - "scripts/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+    inputs:
+      run_smoke_test:
+        description: "Run Hermes smoke test (import + compile check)"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  hermes-ci:
+    name: Hermes Bot — Syntax & Smoke Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --quiet groq python-telegram-bot requests
+
+      - name: Syntax check — hermes_full.py
+        run: |
+          echo "Checking syntax of bot_code/hermes_full.py ..."
+          python -m py_compile bot_code/hermes_full.py
+          echo "✅ Syntax OK"
+
+      - name: Syntax check — health script
+        run: |
+          echo "Checking syntax of scripts/hermes_healthcheck.py ..."
+          python -m py_compile scripts/hermes_healthcheck.py
+          echo "✅ Syntax OK"
+
+      - name: Smoke test — import and static checks
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_smoke_test == 'true' }}
+        env:
+          HERMES_BOT_TOKEN: ${{ secrets.HERMES_BOT_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TELEGRAM_USER_ID: ${{ secrets.TELEGRAM_USER_ID }}
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DATABRICKS_SQL_WAREHOUSE_ID: ${{ secrets.DATABRICKS_SQL_WAREHOUSE_ID }}
+        run: |
+          echo "Running Hermes smoke test (non-destructive) ..."
+          python scripts/hermes_healthcheck.py
