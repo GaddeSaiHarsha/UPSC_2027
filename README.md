@@ -33,20 +33,6 @@ Level 0: [topic] — start from scratch
 ## GitHub Copilot Coding Agent
 
 This repository uses the **GitHub Copilot Coding Agent** for AI-assisted development and study-system improvements.
-
-### How to Ask a Follow-Up Question
-
-1. **Open the task/issue** — navigate to the GitHub issue or task URL (e.g. `github.com/GaddeSaiHarsha/UPSC_2027/issues/<number>`).
-2. **Scroll to the bottom** of the issue page.
-3. **Leave a comment** with your follow-up question or additional instructions.
-4. The Copilot agent will read your comment and continue working on the task, applying any changes or answering your question directly in the thread.
-
-> **Tip:** Be as specific as possible in follow-up comments — include the exact file names, line numbers, or behaviour you want changed.
-
-### Starting a New Agent Task
-
-Go to **Issues → New Issue** (or use the *Copilot* menu if available in your GitHub plan) and describe what you want the agent to do.
-
 ---
 
 ## Persistent Memory (claude-mem)
