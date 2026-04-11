@@ -17,7 +17,7 @@
     "kg_relationships": "upsc_catalog.rag.kg_relationships"
   },
   "vector_search_index": "upsc_catalog.rag.upsc_knowledge_index",
-  "local_vault_path": "~/Desktop/UPSC_2026",
+  "local_vault_path": "~/Desktop/UPSC_2027",
   "sync_direction": "databricks_to_local",
   "sync_schedule": "8:15 AM IST daily (after NB6 7AM + NB7 8AM complete)",
   "cli_profile": "upsc",

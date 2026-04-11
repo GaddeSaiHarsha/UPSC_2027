@@ -54,7 +54,7 @@ else
 fi
 
 # ── Step 6: Create local vault directory ──
-VAULT_DIR="$HOME/Desktop/UPSC_2026"
+VAULT_DIR="$HOME/Desktop/UPSC_2027"
 echo ""
 echo "Step 6: Creating local vault at ${VAULT_DIR}..."
 mkdir -p "${VAULT_DIR}/07_Sync"
@@ -62,11 +62,16 @@ mkdir -p "${VAULT_DIR}/07_Sync"
 # ── Step 7: Initial full sync ──
 echo ""
 echo "Step 7: Running initial full sync from Databricks..."
-echo "  This downloads the entire vault (~15 files, 43 folders)..."
+echo "  This downloads UPSC_2026 vault content + Daily_Practice folder..."
 databricks --profile upsc fs cp -r \
     /Volumes/upsc_catalog/rag/obsidian_ca/UPSC_2026/ \
     "${VAULT_DIR}/" \
     --overwrite
+echo "  Vault content synced ✓"
+databricks --profile upsc fs cp -r \
+    /Volumes/upsc_catalog/rag/obsidian_ca/Daily_Practice/ \
+    "${VAULT_DIR}/Daily_Practice/" \
+    --overwrite 2>/dev/null && echo "  Daily_Practice synced ✓" || echo "  ⚠️  Daily_Practice not yet on volume — will appear after NB7 runs"
 echo "  Initial sync complete! ✓"
 
 # ── Step 8: Fix launchd plist with actual $HOME ──
@@ -124,14 +129,15 @@ echo "════════════════════════�
 echo "  SETUP COMPLETE!"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
-echo "  Vault location:  ~/Desktop/UPSC_2026"
-echo "  Open in Obsidian: Open Folder as Vault → ~/Desktop/UPSC_2026"
+echo "  Vault location:  ~/Desktop/UPSC_2027"
+echo "  Open in Obsidian: Open Folder as Vault → ~/Desktop/UPSC_2027"
 echo "  Auto-sync:        Daily at 8:15 AM IST via launchd"
 echo ""
 echo "  Manual sync commands:"
-echo "    Full sync:  python3 ~/Desktop/UPSC_2026/07_Sync/sync_from_databricks.py"
-echo "    CA only:    python3 ~/Desktop/UPSC_2026/07_Sync/sync_from_databricks.py --ca-only"
-echo "    Dry run:    python3 ~/Desktop/UPSC_2026/07_Sync/sync_from_databricks.py --dry-run"
+echo "    Full sync:  python3 ~/Desktop/UPSC_2027/07_Sync/sync_from_databricks.py"
+echo "    CA only:    python3 ~/Desktop/UPSC_2027/07_Sync/sync_from_databricks.py --ca-only"
+echo "    Daily only: python3 ~/Desktop/UPSC_2027/07_Sync/sync_from_databricks.py --daily-only"
+echo "    Dry run:    python3 ~/Desktop/UPSC_2027/07_Sync/sync_from_databricks.py --dry-run"
 echo ""
 echo "  Claude Code MCP (once warehouse ID is set):"
 echo "    Open Claude Code in this folder — 5 Databricks tools will be available:"
@@ -141,5 +147,5 @@ echo "    • get_traps            — search traps by topic or subject"
 echo "    • get_deep_analysis    — mains skeleton + PYQ patterns for a story"
 echo "    • search_chunks        — full-text search across 80K knowledge base"
 echo ""
-echo "  Next: Open Obsidian → Open Folder as Vault → ~/Desktop/UPSC_2026"
+echo "  Next: Open Obsidian → Open Folder as Vault → ~/Desktop/UPSC_2027"
 echo "═══════════════════════════════════════════════════════════"
