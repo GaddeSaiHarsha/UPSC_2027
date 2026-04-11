@@ -3,7 +3,7 @@ date: 2026-04-08
 mode: 2
 title: KARL Evaluation
 model: databricks-claude-sonnet-4
-pipeline: NB7_Daily_CA_Practice_Generatorpipeline:
+pipeline: NB7_Daily_CA_Practice_Generator
 ---
 
 # Mode 2: KARL Evaluation
