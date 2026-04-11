@@ -524,8 +524,11 @@ def call_hermes(user_message: str, memory_context: str = "",
     Core LLM call — uses ACTIVE_MODEL to route to Groq or Databricks.
     Returns (text, tokens, latency_ms).
     All async handlers call via: await asyncio.to_thread(call_hermes, ...)
+
+    Note: ACTIVE_MODEL is a bot-level global because this bot is single-user
+    by design (TELEGRAM_USER_ID enforced via check_auth()). The /model command
+    switches the model for the single authorised user.
     """
-    global ACTIVE_MODEL
 
     system = HERMES_SYSTEM.format(
         memory_context=memory_context or "No history yet.",
