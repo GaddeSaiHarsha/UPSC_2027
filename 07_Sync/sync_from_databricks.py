@@ -2,12 +2,26 @@
 """
 UPSC Obsidian Vault Sync — Databricks Volume → Local Mac
 =========================================================
-Syncs the entire UPSC_2026 vault from Databricks Volumes to local Obsidian.
-Uses Databricks CLI v2. Runs via launchd at 8:15 AM IST daily.
+Syncs two sources from Databricks Volumes into the local ~/Desktop/UPSC_2027 vault:
+
+  1. UPSC_2026/   — the main vault content (CA stories, subjects, PYQs, …)
+  2. Daily_Practice/ — daily MCQ/mains practice files written by NB7
+
+Both live under /Volumes/upsc_catalog/rag/obsidian_ca/ on Databricks.
+
+Uses Databricks CLI v2.  Runs via launchd at 8:15 AM IST daily (after NB7 8 AM).
+
+End-to-end flow:
+  NB6 (7 AM) → NB7 (8 AM) → NB8 (8:30 AM) → NB9 (9 AM, GitHub backup)
+                   ↑
+            writes to Databricks Volumes
+                   ↓
+  launchd 8:15 AM → this script → ~/Desktop/UPSC_2027 (Obsidian)
 
 Usage:
-  python3 sync_from_databricks.py              # full sync
+  python3 sync_from_databricks.py              # full sync (vault + Daily_Practice)
   python3 sync_from_databricks.py --ca-only     # only today's CA notes
+  python3 sync_from_databricks.py --daily-only  # only Daily_Practice folder
   python3 sync_from_databricks.py --dry-run     # preview without copying
 """
 
@@ -22,6 +36,7 @@ with open(CONFIG_PATH) as f:
 
 LOCAL_VAULT = Path(config["local_vault_path"]).expanduser()
 VOLUME_BASE = "dbfs:" + config["volume_ca_path"] + "/UPSC_2026"
+VOLUME_DAILY = "dbfs:" + config["volume_ca_path"] + "/Daily_Practice"
 HOST = config["databricks_host"]
 LOG_FILE = LOCAL_VAULT / "07_Sync" / "sync.log"
 
@@ -72,15 +87,17 @@ def sync_folder(remote_path, local_path, dry_run=False):
 
 def main():
     ca_only = "--ca-only" in sys.argv
+    daily_only = "--daily-only" in sys.argv
     dry_run = "--dry-run" in sys.argv
     today = date.today()
     month_folder = today.strftime("%m-%B")
     
     log.info("=" * 60)
     log.info(f"UPSC Vault Sync | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    log.info(f"Mode: {'CA-only' if ca_only else 'Full vault'} | {'DRY RUN' if dry_run else 'LIVE'}")
-    log.info(f"Remote: {VOLUME_BASE}")
-    log.info(f"Local:  {LOCAL_VAULT}")
+    log.info(f"Mode: {'CA-only' if ca_only else 'Daily_Practice-only' if daily_only else 'Full vault + Daily_Practice'} | {'DRY RUN' if dry_run else 'LIVE'}")
+    log.info(f"Remote vault:   {VOLUME_BASE}")
+    log.info(f"Remote daily:   {VOLUME_DAILY}")
+    log.info(f"Local:          {LOCAL_VAULT}")
     log.info("=" * 60)
     
     # Test CLI connectivity
@@ -99,8 +116,13 @@ def main():
             (f"{VOLUME_BASE}/01_Current_Affairs/2026/{month_folder}",
              LOCAL_VAULT / "01_Current_Affairs" / "2026" / month_folder),
         ]
+    elif daily_only:
+        # Sync only Daily_Practice from Databricks Volume
+        folders = [
+            (VOLUME_DAILY, LOCAL_VAULT / "Daily_Practice"),
+        ]
     else:
-        # Full vault sync — all content folders
+        # Full vault sync — all UPSC_2026 content folders + Daily_Practice
         folders = [
             # Dashboard & config
             (f"{VOLUME_BASE}/.obsidian", LOCAL_VAULT / ".obsidian"),
@@ -121,6 +143,8 @@ def main():
             # Sync config + templates
             (f"{VOLUME_BASE}/07_Sync", LOCAL_VAULT / "07_Sync"),
             (f"{VOLUME_BASE}/Templates", LOCAL_VAULT / "Templates"),
+            # Daily Practice files (written by NB7, separate Volume subfolder)
+            (VOLUME_DAILY, LOCAL_VAULT / "Daily_Practice"),
         ]
     
     for remote, local in folders:

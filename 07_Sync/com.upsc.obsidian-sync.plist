@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>{HOME}/Desktop/UPSC_2026/07_Sync/sync_from_databricks.py</string>
+        <string>{HOME}/Desktop/UPSC_2027/07_Sync/sync_from_databricks.py</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
@@ -18,9 +18,9 @@
         <integer>45</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>{HOME}/Desktop/UPSC_2026/07_Sync/launchd_stdout.log</string>
+    <string>{HOME}/Desktop/UPSC_2027/07_Sync/launchd_stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>{HOME}/Desktop/UPSC_2026/07_Sync/launchd_stderr.log</string>
+    <string>{HOME}/Desktop/UPSC_2027/07_Sync/launchd_stderr.log</string>
     <key>RunAtLoad</key>
     <false/>
     <key>EnvironmentVariables</key>

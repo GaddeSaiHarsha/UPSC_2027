@@ -5,6 +5,10 @@
 2. Select `GaddeSaiHarsha/UPSC_2027`
 3. Railway auto-detects `railway.toml` → click **Deploy**
 
+> **How the start command is resolved** (first match wins):
+> 1. `railway.toml` → `[deploy] startCommand = "python bot_code/hermes_full.py"`
+> 2. `Procfile` → `worker: python bot_code/hermes_full.py` (fallback)
+
 ## Step 2 — Set environment variables
 In Railway → your service → **Variables** tab, add these 5:
 
@@ -42,9 +46,35 @@ Railway → your service → **Logs** tab — live tail.
 
 Look for:
 ```
-Hermes V1.8 starting...
+Hermes V2.0 starting...
 Bot polling started
 ```
+
+## Healthcheck
+
+Run before or after deploying to verify the bot environment is sound:
+
+```bash
+# From repo root (no live API calls made)
+python scripts/hermes_healthcheck.py
+```
+
+Expected output when all green:
+```
+============================================================
+Hermes Health Check
+============================================================
+[1] File existence checks
+  ✅ bot_code/hermes_full.py exists
+  ...
+[4] Environment variable checks
+  ✅ HERMES_BOT_TOKEN is set
+  ✅ GROQ_API_KEY is set
+  ...
+✅ Health check PASSED — all checks green
+```
+
+On Railway, add a post-deploy hook or simply tail the logs for the startup banner.
 
 ## Cost
 - Railway free tier: 500 hrs/month (enough for 24/7 if only 1 service)
