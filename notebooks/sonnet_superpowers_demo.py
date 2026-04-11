@@ -1,9 +1,9 @@
 # Databricks notebook source
 # DBTITLE 1,Header
 # MAGIC %md
-# MAGIC # ðŸš€ Claude Sonnet 4.6 â€” UPSC Superpowers Demo
+# MAGIC # 🚀 Claude Sonnet 4.6 — UPSC Superpowers Demo
 # MAGIC
-# MAGIC **Model Strategy:** NB6 CA Pipeline â†’ **Opus 4.6** (deep reasoning) | Everything else â†’ **Sonnet 4.6** (90% quality, 3x cheaper)
+# MAGIC **Model Strategy:** NB6 CA Pipeline → **Opus 4.6** (deep reasoning) | Everything else → **Sonnet 4.6** (90% quality, 3x cheaper)
 # MAGIC
 # MAGIC This notebook demonstrates everything you can do with Claude Sonnet 4.6 on your UPSC data. Each cell is a standalone example you can copy into any notebook or pipeline.
 # MAGIC
@@ -13,7 +13,7 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,ðŸ“° CA Story Deep Analysis
+# DBTITLE 1,📰 CA Story Deep Analysis
 # MAGIC %sql
 # MAGIC -- Pick the latest CA story and generate a comprehensive UPSC Mains analysis using Sonnet 4.6
 # MAGIC SELECT
@@ -39,7 +39,7 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,ðŸŽ¯ Auto-Generate Prelims MCQs from Polity
+# DBTITLE 1,🎯 Auto-Generate Prelims MCQs from Polity
 # MAGIC %sql
 # MAGIC -- Generate 3 UPSC Prelims-style MCQs from Polity chunks using Sonnet 4.6
 # MAGIC WITH polity_chunks AS (
@@ -65,7 +65,7 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,ðŸ”— Knowledge Graph â†’ Mains Interlinking
+# DBTITLE 1,🔗 Knowledge Graph → Mains Interlinking
 # MAGIC %sql
 # MAGIC -- Find the most connected entity in KG and generate an interlinking Mains answer
 # MAGIC WITH top_entity AS (
@@ -88,7 +88,7 @@
 # MAGIC     te.description,
 # MAGIC     te.connection_count,
 # MAGIC     COLLECT_LIST(
-# MAGIC       CONCAT(r.relationship_type, ' â†’ ', e2.entity_name, ' (', e2.entity_type, ')')
+# MAGIC       CONCAT(r.relationship_type, ' → ', e2.entity_name, ' (', e2.entity_type, ')')
 # MAGIC     ) AS connections
 # MAGIC   FROM top_entity te
 # MAGIC   JOIN upsc_catalog.rag.kg_relationships r
@@ -118,7 +118,7 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,ðŸ“ Telugu Optional â€” AI Evaluation
+# DBTITLE 1,📝 Telugu Optional — AI Evaluation
 # MAGIC %sql
 # MAGIC -- Generate a PYQ-style question + model answer with Telugu rubric using Sonnet 4.6
 # MAGIC SELECT
@@ -148,7 +148,7 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,âš ï¸ Trap Detector â€” Weekly Trap Flashcards
+# DBTITLE 1,⚠️ Trap Detector — Weekly Trap Flashcards
 # MAGIC %sql
 # MAGIC -- Analyze this week's traps and generate counter-strategy flashcards using Sonnet 4.6
 # MAGIC WITH weekly_traps AS (
@@ -181,7 +181,7 @@
 # MAGIC       'Severity: ', wt.severity, '\n',
 # MAGIC       'Source Story: ', wt.story_title, '\n\n',
 # MAGIC       'Generate:\n',
-# MAGIC       '1. FLASHCARD: Wrong â†’ Correct (with mnemonic trick)\n',
+# MAGIC       '1. FLASHCARD: Wrong → Correct (with mnemonic trick)\n',
 # MAGIC       '2. MCQ designed to TEST this exact trap\n',
 # MAGIC       '3. Related traps to watch out for in same subject'
 # MAGIC     ),
@@ -191,7 +191,7 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,ðŸ“Š Essay Thread Evolution â€” Predicted 2027 Topics
+# DBTITLE 1,📊 Essay Thread Evolution — Predicted 2027 Topics
 # MAGIC %sql
 # MAGIC -- Analyze trending essay themes and predict 2027 essay topics using Sonnet 4.6
 # MAGIC WITH top_themes AS (
@@ -209,7 +209,7 @@
 # MAGIC       (SELECT ARRAY_JOIN(COLLECT_LIST(
 # MAGIC         CONCAT('- ', theme, ' (frequency=', CAST(frequency AS STRING), '): ', essay_title)
 # MAGIC       ), '\n') FROM top_themes),
-# MAGIC       '\n\nFor UPSC Essay Paper (2 essays Ã— 125 marks Ã— 3 hours):\n',
+# MAGIC       '\n\nFor UPSC Essay Paper (2 essays × 125 marks × 3 hours):\n',
 # MAGIC       '1. Predict TOP 5 most likely essay topics for 2027\n',
 # MAGIC       '2. For each: give a philosophical angle + practical angle\n',
 # MAGIC       '3. Suggest 2 quotes per topic (1 Indian thinker, 1 Western)\n',
@@ -221,9 +221,9 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,ðŸŽ“ Mains Answer Generator â€” RAG + Sonnet
+# DBTITLE 1,🎓 Mains Answer Generator — RAG + Sonnet
 # MAGIC %sql
-# MAGIC -- Full RAG pipeline: retrieve chunks from KB â†’ generate exam-quality Mains answer with Sonnet 4.6
+# MAGIC -- Full RAG pipeline: retrieve chunks from KB → generate exam-quality Mains answer with Sonnet 4.6
 # MAGIC WITH relevant_chunks AS (
 # MAGIC   SELECT text, subject, source_file
 # MAGIC   FROM upsc_catalog.rag.contextual_chunks
@@ -238,7 +238,7 @@
 # MAGIC       'You are a UPSC Mains answer writing coach (GS2 expert).\n\n',
 # MAGIC       'REFERENCE MATERIAL FROM KNOWLEDGE BASE:\n',
 # MAGIC       (SELECT ARRAY_JOIN(COLLECT_LIST(
-# MAGIC         CONCAT('[', subject, ' â€” ', source_file, ']: ', SUBSTRING(text, 1, 400))
+# MAGIC         CONCAT('[', subject, ' — ', source_file, ']: ', SUBSTRING(text, 1, 400))
 # MAGIC       ), '\n\n') FROM relevant_chunks),
 # MAGIC       '\n\n---\nQUESTION: "Discuss the role of judiciary in protecting fundamental rights. How has judicial activism expanded the scope of Article 21?" (250 words, 15 marks)\n\n',
 # MAGIC       'Write a complete Mains answer following this structure:\n',
@@ -253,10 +253,10 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,ðŸ“± Obsidian Copilot + Databricks Claude Setup
+# DBTITLE 1,📱 Obsidian Copilot + Databricks Claude Setup
 # MAGIC %md
 # MAGIC ---
-# MAGIC # ðŸ“± Obsidian Copilot + Databricks Claude â€” Complete Setup Guide
+# MAGIC # 📱 Obsidian Copilot + Databricks Claude — Complete Setup Guide
 # MAGIC
 # MAGIC > **Goal:** Chat with your Obsidian vault notes using Opus 4.6 / Sonnet 4.6 powered by your Databricks endpoint. No Anthropic API key needed.
 # MAGIC
@@ -265,34 +265,34 @@
 # MAGIC ## Prerequisites
 # MAGIC | What | Details |
 # MAGIC |---|---|
-# MAGIC | Obsidian | Installed on Mac (â‰¥ v1.4) |
+# MAGIC | Obsidian | Installed on Mac (≥ v1.4) |
 # MAGIC | Vault | `~/Desktop/UPSC_2026` (synced from Databricks Volume) |
-# MAGIC | Databricks PAT | Generate from: Workspace â†’ User Settings â†’ Developer â†’ Access Tokens |
+# MAGIC | Databricks PAT | Generate from: Workspace → User Settings → Developer → Access Tokens |
 # MAGIC | Internet | Must reach `adb-7405615460529826.6.azuredatabricks.net` |
 # MAGIC
 # MAGIC ---
 # MAGIC
 # MAGIC ## Step 1: Generate Databricks PAT Token
 # MAGIC 1. Open your Databricks workspace in browser
-# MAGIC 2. Click your profile icon (top-right) â†’ **Settings**
-# MAGIC 3. Go to **Developer** â†’ **Access Tokens**
+# MAGIC 2. Click your profile icon (top-right) → **Settings**
+# MAGIC 3. Go to **Developer** → **Access Tokens**
 # MAGIC 4. Click **Generate New Token**
 # MAGIC 5. Name: `obsidian-copilot`, Lifetime: 90 days
-# MAGIC 6. **Copy the token** (starts with `dapi...`) â€” you won't see it again!
+# MAGIC 6. **Copy the token** (starts with `dapi...`) — you won't see it again!
 # MAGIC
 # MAGIC ---
 # MAGIC
 # MAGIC ## Step 2: Install Copilot Plugin
-# MAGIC 1. Open Obsidian â†’ Settings (âš™ï¸) â†’ **Community Plugins**
+# MAGIC 1. Open Obsidian → Settings (⚙️) → **Community Plugins**
 # MAGIC 2. Turn off **Restricted Mode** if prompted
-# MAGIC 3. Click **Browse** â†’ Search: **"Copilot"**
-# MAGIC 4. Install **Copilot** by Logan Yang (â­ most popular AI chat plugin)
+# MAGIC 3. Click **Browse** → Search: **"Copilot"**
+# MAGIC 4. Install **Copilot** by Logan Yang (⭐ most popular AI chat plugin)
 # MAGIC 5. Click **Enable**
 # MAGIC
 # MAGIC ---
 # MAGIC
 # MAGIC ## Step 3: Configure Custom Model (Databricks Claude)
-# MAGIC 1. Settings â†’ **Copilot** â†’ scroll to **Model Settings**
+# MAGIC 1. Settings → **Copilot** → scroll to **Model Settings**
 # MAGIC 2. Click **Add Custom Model** and set:
 # MAGIC
 # MAGIC | Setting | Value |
@@ -312,7 +312,7 @@
 # MAGIC | (rest same as above) | |
 # MAGIC
 # MAGIC 4. Set **Default Model** to `Claude Opus 4.6 (UPSC)` for deep analysis
-# MAGIC 5. Click **Test Connection** â†’ should show a response
+# MAGIC 5. Click **Test Connection** → should show a response
 # MAGIC
 # MAGIC ---
 # MAGIC
@@ -321,15 +321,15 @@
 # MAGIC |---|---|---|
 # MAGIC | Temperature | `0.3` | Factual for UPSC |
 # MAGIC | Max Tokens | `2000` | Enough for full answers |
-# MAGIC | Use Active Note as Context | âœ… ON | Sends current note to Claude |
+# MAGIC | Use Active Note as Context | ✅ ON | Sends current note to Claude |
 # MAGIC | System Prompt | `You are a UPSC CSE 2027 expert tutor. Be precise, cite Article numbers, case laws, and specific facts. Format for exam answers.` | UPSC-focused |
-# MAGIC | Auto-complete | âŒ OFF | Saves tokens (costs per keystroke) |
+# MAGIC | Auto-complete | ❌ OFF | Saves tokens (costs per keystroke) |
 # MAGIC
 # MAGIC ---
 # MAGIC
 # MAGIC ## Step 5: Starter Prompts (Copy-Paste Ready)
 # MAGIC
-# MAGIC ### ðŸ“° For CA Notes (Daily)
+# MAGIC ### 📰 For CA Notes (Daily)
 # MAGIC ```
 # MAGIC Summarize this CA note for GS2 Mains in 150 words
 # MAGIC What Prelims MCQs can be framed from this story?
@@ -337,7 +337,7 @@
 # MAGIC How does this connect to last month's CA on similar topics?
 # MAGIC ```
 # MAGIC
-# MAGIC ### ðŸ“ For Revision
+# MAGIC ### 📝 For Revision
 # MAGIC ```
 # MAGIC Create 5 flashcards from this note (front: question, back: answer)
 # MAGIC What are the 7 key facts I MUST remember from this?
@@ -345,7 +345,7 @@
 # MAGIC Explain this topic as if teaching to a 10-year-old
 # MAGIC ```
 # MAGIC
-# MAGIC ### ðŸŽ¯ For Mains Practice
+# MAGIC ### 🎯 For Mains Practice
 # MAGIC ```
 # MAGIC Write a 250-word model answer based on this note (15 marks)
 # MAGIC Frame an Ethics GS4 case study from this current affairs
@@ -353,7 +353,7 @@
 # MAGIC What interlinking points connect GS1, GS2, and GS3 here?
 # MAGIC ```
 # MAGIC
-# MAGIC ### ðŸ“š For Telugu Optional
+# MAGIC ### 📚 For Telugu Optional
 # MAGIC ```
 # MAGIC Explain the literary significance of this kavya section
 # MAGIC What prosody rules (chhandas) are used in these verses?
@@ -361,7 +361,7 @@
 # MAGIC How would this score as a 50-mark answer? Improve it.
 # MAGIC ```
 # MAGIC
-# MAGIC ### âœï¸ For Essay Prep
+# MAGIC ### ✍️ For Essay Prep
 # MAGIC ```
 # MAGIC Suggest 3 essay angles from this current affairs piece
 # MAGIC Find philosophical quotes that connect to this theme
@@ -372,28 +372,28 @@
 # MAGIC ---
 # MAGIC
 # MAGIC ## Step 6: Pro Tips
-# MAGIC * **Tag your notes** with #GS1, #GS2, #GS3, #GS4, #Prelims, #Telugu â€” Copilot uses these as context
-# MAGIC * **Cost control:** Sonnet 4.6 for daily use (âˆ¼2 DBU per session), Opus only for deep review
+# MAGIC * **Tag your notes** with #GS1, #GS2, #GS3, #GS4, #Prelims, #Telugu — Copilot uses these as context
+# MAGIC * **Cost control:** Sonnet 4.6 for daily use (∼2 DBU per session), Opus only for deep review
 # MAGIC * **Vault-wide search:** Type `@note:` in chat to reference specific notes by name
 # MAGIC * **Chain prompts:** First ask "Summarize" then "Now generate MCQs from this summary"
 # MAGIC * **Offline fallback:** Copilot needs internet; use your synced Obsidian notes directly for offline review
-# MAGIC * **Keyboard shortcut:** Set `Cmd+Shift+C` â†’ Open Copilot Chat for quick access
+# MAGIC * **Keyboard shortcut:** Set `Cmd+Shift+C` → Open Copilot Chat for quick access
 # MAGIC
 # MAGIC ---
 # MAGIC
 # MAGIC ## Cost Estimate
-# MAGIC | Usage Pattern | Model | DBU/Session | Monthly (âˆ¼30 sessions) |
+# MAGIC | Usage Pattern | Model | DBU/Session | Monthly (∼30 sessions) |
 # MAGIC |---|---|---|---|
-# MAGIC | Quick Q&A (5 prompts) | Sonnet 4.6 | âˆ¼0.5 DBU | âˆ¼15 DBU |
-# MAGIC | Deep Review (20 prompts) | Opus 4.6 | âˆ¼5 DBU | âˆ¼150 DBU |
-# MAGIC | Recommended Mix | Sonnet daily + Opus weekend | âˆ¼1.5 DBU avg | âˆ¼45 DBU |
+# MAGIC | Quick Q&A (5 prompts) | Sonnet 4.6 | ∼0.5 DBU | ∼15 DBU |
+# MAGIC | Deep Review (20 prompts) | Opus 4.6 | ∼5 DBU | ∼150 DBU |
+# MAGIC | Recommended Mix | Sonnet daily + Opus weekend | ∼1.5 DBU avg | ∼45 DBU |
 
 # COMMAND ----------
 
-# DBTITLE 1,ðŸ’» CLI Commands Reference â€” From Scratch
+# DBTITLE 1,💻 CLI Commands Reference — From Scratch
 # MAGIC %md
 # MAGIC ---
-# MAGIC # ðŸ’» CLI Commands Reference â€” All Methods, From Scratch
+# MAGIC # 💻 CLI Commands Reference — All Methods, From Scratch
 # MAGIC
 # MAGIC > **Default Model:** `databricks-claude-sonnet-4-6` for CLI | `databricks-claude-opus-4-6` for NB6 only
 # MAGIC >
@@ -403,7 +403,7 @@
 # MAGIC
 # MAGIC ---
 # MAGIC
-# MAGIC ## 0ï¸âƒ£ One-Time Setup (if starting fresh)
+# MAGIC ## 0️⃣ One-Time Setup (if starting fresh)
 # MAGIC
 # MAGIC ### Mac
 # MAGIC ```bash
@@ -419,7 +419,7 @@
 # MAGIC databricks serving-endpoints list --profile upsc --output json | python3 -c "
 # MAGIC import sys,json
 # MAGIC for e in json.load(sys.stdin):
-# MAGIC     if 'claude' in e['name']: print(f\"  âœ… {e['name']}\")
+# MAGIC     if 'claude' in e['name']: print(f\"  ✅ {e['name']}\")
 # MAGIC "
 # MAGIC
 # MAGIC # Install Python SDKs (for Methods 4 & 5)
@@ -442,7 +442,7 @@
 # MAGIC
 # MAGIC ---
 # MAGIC
-# MAGIC ## 1ï¸âƒ£ Databricks CLI Direct (Simplest â€” Zero Code)
+# MAGIC ## 1️⃣ Databricks CLI Direct (Simplest — Zero Code)
 # MAGIC ```bash
 # MAGIC # Basic question
 # MAGIC databricks serving-endpoints query --profile upsc \
@@ -462,7 +462,7 @@
 # MAGIC
 # MAGIC ---
 # MAGIC
-# MAGIC ## 2ï¸âƒ£ curl + OpenAI-Compatible API
+# MAGIC ## 2️⃣ curl + OpenAI-Compatible API
 # MAGIC ```bash
 # MAGIC # Step 1: Get token
 # MAGIC # Mac:
@@ -487,7 +487,7 @@
 # MAGIC
 # MAGIC ---
 # MAGIC
-# MAGIC ## 3ï¸âƒ£ curl + Anthropic-Native API
+# MAGIC ## 3️⃣ curl + Anthropic-Native API
 # MAGIC ```bash
 # MAGIC # Uses Claude's native message format (same token)
 # MAGIC curl -s https://adb-7405615460529826.6.azuredatabricks.net/serving-endpoints/databricks-claude-sonnet-4-6/anthropic/v1/messages \
@@ -503,7 +503,7 @@
 # MAGIC
 # MAGIC ---
 # MAGIC
-# MAGIC ## 4ï¸âƒ£ Python â€” OpenAI SDK (save as `upsc_ask.py`)
+# MAGIC ## 4️⃣ Python — OpenAI SDK (save as `upsc_ask.py`)
 # MAGIC ```python
 # MAGIC from openai import OpenAI
 # MAGIC import subprocess, json, sys
@@ -539,7 +539,7 @@
 # MAGIC
 # MAGIC ---
 # MAGIC
-# MAGIC ## 5ï¸âƒ£ Python â€” Anthropic SDK (native Claude)
+# MAGIC ## 5️⃣ Python — Anthropic SDK (native Claude)
 # MAGIC ```python
 # MAGIC import anthropic, subprocess, json, sys
 # MAGIC
@@ -563,29 +563,29 @@
 # MAGIC
 # MAGIC ---
 # MAGIC
-# MAGIC ## 6ï¸âƒ£ Claude Code + MCP (Already Configured!)
+# MAGIC ## 6️⃣ Claude Code + MCP (Already Configured!)
 # MAGIC ```bash
 # MAGIC # Just open Claude Code (uses your Pro $20/mo)
 # MAGIC claude
 # MAGIC
-# MAGIC # Then ask naturally â€” MCP servers auto-connect:
+# MAGIC # Then ask naturally — MCP servers auto-connect:
 # MAGIC > Query today's CA stories from Databricks and summarize for Mains
 # MAGIC > Search knowledge graph for Article 21 connections  
 # MAGIC > What Telugu PYQ patterns exist for Kavitrayam?
 # MAGIC > Run the healing embed pipeline for any missing chunks
 # MAGIC
 # MAGIC # Your 6 MCP servers:
-# MAGIC #   SQL â†’ query any table
-# MAGIC #   Vector Search â†’ semantic search 80,800 chunks
-# MAGIC #   UC Functions â†’ search_knowledge_graph()
-# MAGIC #   Genie UPSC â†’ natural language data queries
-# MAGIC #   Genie Telugu â†’ Telugu optional queries
-# MAGIC #   MLflow â†’ model experiments
+# MAGIC #   SQL → query any table
+# MAGIC #   Vector Search → semantic search 80,800 chunks
+# MAGIC #   UC Functions → search_knowledge_graph()
+# MAGIC #   Genie UPSC → natural language data queries
+# MAGIC #   Genie Telugu → Telugu optional queries
+# MAGIC #   MLflow → model experiments
 # MAGIC ```
 # MAGIC
 # MAGIC ---
 # MAGIC
-# MAGIC ## 7ï¸âƒ£ Shell Alias (Add to `~/.zshrc` for instant access)
+# MAGIC ## 7️⃣ Shell Alias (Add to `~/.zshrc` for instant access)
 # MAGIC ```bash
 # MAGIC # Add these to ~/.zshrc (Mac) or PowerShell $PROFILE (Windows)
 # MAGIC
@@ -637,26 +637,26 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,ðŸ“ Notebook Summary
+# DBTITLE 1,📝 Notebook Summary
 # MAGIC %md
 # MAGIC ---
-# MAGIC ## ðŸ“ What This Notebook Covers
+# MAGIC ## 📝 What This Notebook Covers
 # MAGIC
 # MAGIC | # | Cell | What It Does | ai_query Model |
 # MAGIC |---|---|---|---|
-# MAGIC | 2 | CA Story Analysis | Latest story â†’ GS mapping + model answer + MCQ | Sonnet 4.6 |
-# MAGIC | 3 | Prelims MCQ Gen | Random Polity chunks â†’ 3 exam-quality MCQs | Sonnet 4.6 |
-# MAGIC | 4 | KG Interlinking | Most connected entity â†’ cross-GS paper answer | Sonnet 4.6 |
-# MAGIC | 5 | Telugu Evaluation | Random Telugu chunk â†’ PYQ question + rubric | Sonnet 4.6 |
-# MAGIC | 6 | Trap Detector | Weekly traps â†’ flashcards + counter-MCQs | Sonnet 4.6 |
-# MAGIC | 7 | Essay Predictions | Trending themes â†’ 2027 topic predictions | Sonnet 4.6 |
-# MAGIC | 8 | Mains RAG | KB chunks + Sonnet â†’ complete 15-mark answer | Sonnet 4.6 |
+# MAGIC | 2 | CA Story Analysis | Latest story → GS mapping + model answer + MCQ | Sonnet 4.6 |
+# MAGIC | 3 | Prelims MCQ Gen | Random Polity chunks → 3 exam-quality MCQs | Sonnet 4.6 |
+# MAGIC | 4 | KG Interlinking | Most connected entity → cross-GS paper answer | Sonnet 4.6 |
+# MAGIC | 5 | Telugu Evaluation | Random Telugu chunk → PYQ question + rubric | Sonnet 4.6 |
+# MAGIC | 6 | Trap Detector | Weekly traps → flashcards + counter-MCQs | Sonnet 4.6 |
+# MAGIC | 7 | Essay Predictions | Trending themes → 2027 topic predictions | Sonnet 4.6 |
+# MAGIC | 8 | Mains RAG | KB chunks + Sonnet → complete 15-mark answer | Sonnet 4.6 |
 # MAGIC
-# MAGIC **All cells use `ai_query()` SQL function â€” no Python SDK needed. Just Run All.**
+# MAGIC **All cells use `ai_query()` SQL function — no Python SDK needed. Just Run All.**
 # MAGIC
 # MAGIC ### Model Strategy Recap
-# MAGIC * **NB6 CA Pipeline (7AM):** Opus 4.6 â€” deep 2-pass reasoning
-# MAGIC * **Everything else:** Sonnet 4.6 â€” 90% quality, 3x cheaper
-# MAGIC * **Telegram Bot:** Llama 3.3 70B â€” cheapest, scale-to-zero
-# MAGIC * **Obsidian Copilot:** Opus 4.6 â€” 1M context for vault analysis
+# MAGIC * **NB6 CA Pipeline (7AM):** Opus 4.6 — deep 2-pass reasoning
+# MAGIC * **Everything else:** Sonnet 4.6 — 90% quality, 3x cheaper
+# MAGIC * **Telegram Bot:** Llama 3.3 70B — cheapest, scale-to-zero
+# MAGIC * **Obsidian Copilot:** Opus 4.6 — 1M context for vault analysis
 # MAGIC * **CLI queries:** Sonnet 4.6 via `upsc` alias
