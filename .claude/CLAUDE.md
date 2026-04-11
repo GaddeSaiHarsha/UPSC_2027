@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════
 # Share this file with Claude Code, Claude API, or any AI assistant
 # to give full context about the UPSC preparation system.
-# Last updated: 2026-04-09 (Session 6 — MCP + KG + Model Strategy)
+# Last updated: 2026-04-11 (Session 7 — Hermes V2.0 + .claude/ cleanup)
 # ═══════════════════════════════════════════════════════════
 
 ## WHO I AM
@@ -316,6 +316,8 @@ What would Ambedkar, Gandhi, and Kalam say about this?
 │   └── themes/Minimal/          # Clean dark theme
 │
 ├── .claude/CLAUDE.md             # THIS FILE (AI context)
+│   # .claude/ cleaned 2026-04-11: removed junk files from PR #14
+│   # Only CLAUDE.md + settings.json remain (settings.local.json is gitignored)
 │
 ├── 00_Dashboard/
 │   ├── Home.md                   # Command center (80,800 chunks, pipeline status)
@@ -394,6 +396,8 @@ Use Topic_Note template, check Trap_Index, create in correct subject folder
 - **Vault path (Linux/Codespace)**: `/home/$USER/UPSC_2026`
 - **Hermes memory DB**: `/home/$USER/UPSC_2026/.upsc_memory.db`
 - **Telegram User ID**: `2022402970`
+- **Hermes Version**: V2.0 — inline buttons, 15-min timeout, emoji reactions, /model switching
+- **Hermes /model options**: `groq` (default, free) | `databricks-sonnet` | `databricks-opus`
 </private>
 
 ## DAILY PIPELINE TIMELINE

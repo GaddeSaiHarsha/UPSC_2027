@@ -1,5 +1,5 @@
 """
-HERMES — Full UPSC AIR-1 Mentor Bot  [V1.8]
+HERMES — Full UPSC AIR-1 Mentor Bot  [V2.0]
 =============================================
 Groq backend (Llama 3.3 70B) — Free tier, ~$0/month
 Same commands as your main bot + 15 new Hermes-exclusive commands
@@ -14,6 +14,12 @@ CHANGELOG:
   V1.8 — Stateful /recall (2-phase: brain-dump → gap-targeted follow-up, scored)
          and /progress (Bloom's Taxonomy Levels 1-5: pass→advance, fail→retry,
          max 2 retries per level before forced advance, full journey summary)
+  V2.0 — Inline keyboard buttons for quiz/drill (tap A/B/C/D instead of typing)
+         Session auto-timeout after 15 min inactivity with user notification
+         Emoji reactions ✅/❌ on quiz grading before detailed feedback
+         Structured logging (logging module, HERMES_DEBUG env var)
+         Startup config validation with version banner
+         /model command extended: live model switching (groq/databricks-sonnet/databricks-opus)
 
 HERMES IS:
   A 20+ year UPSC master who has produced AIR 1, 2, 5, 11 candidates.
@@ -67,9 +73,9 @@ from pathlib import Path
 
 import requests
 from groq import Groq
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import NetworkError, RetryAfter, TimedOut
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 # ================================================================
 # CONFIG
@@ -91,16 +97,27 @@ GROQ_MODEL       = "llama-3.3-70b-versatile"
 GROQ_MAX_TOKENS  = 3000
 GROQ_TEMPERATURE = 0.35
 
+# Databricks model endpoints for live model switching
+DBX_MODEL_SONNET  = "databricks-claude-sonnet-4-6"
+DBX_MODEL_OPUS    = "databricks-claude-opus-4-6"
+
+HERMES_VERSION = "V2.0"
+
 DIVIDER      = "─" * 32
 DIVIDER_WIDE = "═" * 36
 
+_log_level = logging.DEBUG if os.environ.get("HERMES_DEBUG") else logging.INFO
 logging.basicConfig(
-    format="%(asctime)s [HERMES] %(levelname)s — %(message)s",
-    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    level=_log_level,
 )
 log = logging.getLogger("hermes_full")
 
 groq_client: Groq = None  # initialised in main()
+
+# Active model for this session — can be switched with /model groq|databricks-sonnet|databricks-opus
+# Values: "groq" | "databricks-sonnet" | "databricks-opus"
+ACTIVE_MODEL: str = "groq"
 
 
 # ================================================================
@@ -498,15 +515,21 @@ def extract_score(text: str):
 
 
 # ================================================================
-# GROQ ENGINE
+# GROQ / DATABRICKS ENGINE
 # ================================================================
 
 def call_hermes(user_message: str, memory_context: str = "",
                 extra_system: str = "") -> tuple[str, int, int]:
     """
-    Core Groq call. Returns (text, tokens, latency_ms).
+    Core LLM call — uses ACTIVE_MODEL to route to Groq or Databricks.
+    Returns (text, tokens, latency_ms).
     All async handlers call via: await asyncio.to_thread(call_hermes, ...)
+
+    Note: ACTIVE_MODEL is a bot-level global because this bot is single-user
+    by design (TELEGRAM_USER_ID enforced via check_auth()). The /model command
+    switches the model for the single authorised user.
     """
+
     system = HERMES_SYSTEM.format(
         memory_context=memory_context or "No history yet.",
         today=date.today().isoformat(),
@@ -517,6 +540,42 @@ def call_hermes(user_message: str, memory_context: str = "",
         system += f"\n\nADDITIONAL CONTEXT FOR THIS CALL:\n{extra_system}"
 
     t0 = time.time()
+
+    # ── Databricks (OpenAI-compatible endpoint) ──────────────────
+    if ACTIVE_MODEL in ("databricks-sonnet", "databricks-opus"):
+        if not DATABRICKS_HOST or not DATABRICKS_TOKEN:
+            return "⚠️ Databricks not configured. Switch back with /model groq.", 0, 0
+        dbx_model = DBX_MODEL_SONNET if ACTIVE_MODEL == "databricks-sonnet" else DBX_MODEL_OPUS
+        url = f"{DATABRICKS_HOST}/serving-endpoints/{dbx_model}/invocations"
+        payload = {
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user_message},
+            ],
+            "max_tokens": GROQ_MAX_TOKENS,
+            "temperature": GROQ_TEMPERATURE,
+        }
+        try:
+            r = requests.post(
+                url,
+                headers={"Authorization": f"Bearer {DATABRICKS_TOKEN}",
+                         "Content-Type": "application/json"},
+                json=payload,
+                timeout=120,
+            )
+            r.raise_for_status()
+            data    = r.json()
+            text    = data["choices"][0]["message"]["content"] or "(empty response)"
+            tokens  = data.get("usage", {}).get("total_tokens", 0)
+            latency = int((time.time() - t0) * 1000)
+            log.info(f"Databricks/{dbx_model} OK — {tokens} tokens, {latency}ms")
+            return text, tokens, latency
+        except Exception as e:
+            latency = int((time.time() - t0) * 1000)
+            log.error(f"Databricks/{dbx_model} error: {e}")
+            return f"Hermes Databricks error: {str(e)[:300]}", 0, latency
+
+    # ── Groq (default) ───────────────────────────────────────────
     try:
         resp = groq_client.chat.completions.create(
             model=GROQ_MODEL,
@@ -686,7 +745,11 @@ async def thinking(update: Update, msg: str = "🧠 Hermes thinking..."):
 # SESSION + QUIZ PARSING HELPERS
 # ================================================================
 
-SESSION_TTL_SECONDS = 45 * 60  # 45 minutes
+SESSION_TTL_SECONDS = 15 * 60  # 15 minutes inactivity timeout
+SESSION_TIMEOUT_MSG = (
+    "⏰ Session timed out after 15 minutes of inactivity. "
+    "Use /quiz or /drill to start a new session."
+)
 
 
 def set_session(ctx, mode: str, data: dict):
@@ -701,7 +764,8 @@ def clear_session(ctx):
     ctx.user_data.pop("_session", None)
 
 
-def get_session(ctx):
+def get_session(ctx) -> dict | None:
+    """Return active session or None. Clears expired sessions."""
     session = ctx.user_data.get("_session")
     if not session:
         return None
@@ -720,6 +784,26 @@ def get_session(ctx):
     return session
 
 
+def check_session_timeout(ctx) -> bool:
+    """
+    Returns True if there was an active session that has now timed out.
+    Clears the session as a side-effect.
+    """
+    session = ctx.user_data.get("_session")
+    if not session:
+        return False
+    try:
+        updated_at = datetime.fromisoformat(session.get("updated_at", ""))
+    except ValueError:
+        clear_session(ctx)
+        return False
+    age = (datetime.utcnow() - updated_at).total_seconds()
+    if age > SESSION_TTL_SECONDS:
+        clear_session(ctx)
+        return True
+    return False
+
+
 def touch_session(ctx):
     session = ctx.user_data.get("_session")
     if session:
@@ -735,6 +819,18 @@ def normalise_mcq_answer(text: str):
         return None
     m = re.search(r"\b([ABCD])\b", text.strip().upper())
     return m.group(1) if m else None
+
+
+def build_answer_keyboard() -> InlineKeyboardMarkup:
+    """Build A/B/C/D inline keyboard for quiz/drill answers."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🅐 A", callback_data="quiz_ans:A"),
+            InlineKeyboardButton("🅑 B", callback_data="quiz_ans:B"),
+            InlineKeyboardButton("🅒 C", callback_data="quiz_ans:C"),
+            InlineKeyboardButton("🅓 D", callback_data="quiz_ans:D"),
+        ]
+    ])
 
 
 def extract_tagged_block(text: str, tag: str) -> str:
@@ -1599,7 +1695,7 @@ async def cmd_quiz(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "started_at": datetime.utcnow().isoformat()
     })
 
-    await send_long(update, public_text)
+    await update.message.reply_text(public_text, reply_markup=build_answer_keyboard())
 
 
 async def cmd_trap(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1650,7 +1746,7 @@ async def cmd_drill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "started_at": datetime.utcnow().isoformat()
     })
 
-    await send_long(update, public_text)
+    await update.message.reply_text(public_text, reply_markup=build_answer_keyboard())
 
 
 async def cmd_pyq(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1788,10 +1884,57 @@ async def cmd_evaluate(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """
+    Dual-purpose command:
+      /model groq               — switch to Groq/Llama 3.3 70B (default, free)
+      /model databricks-sonnet  — switch to Claude Sonnet 4.6 via Databricks (costs DBUs)
+      /model databricks-opus    — switch to Claude Opus 4.6 via Databricks (costs more DBUs)
+      /model                    — show current model
+      /model <topic>            — build a mental model for a UPSC topic (original behaviour)
+    """
+    global ACTIVE_MODEL
     if not check_auth(update): return
-    topic = " ".join(ctx.args) if ctx.args else ""
-    if not topic:
-        await update.message.reply_text("Usage: /model <topic>"); return
+    arg = " ".join(ctx.args).strip() if ctx.args else ""
+
+    # ── Live model switching ──────────────────────────────────────
+    _switch_map = {
+        "groq": "groq",
+        "databricks-sonnet": "databricks-sonnet",
+        "databricks-opus": "databricks-opus",
+    }
+    if not arg:
+        model_label = {
+            "groq": f"Groq / {GROQ_MODEL} (free)",
+            "databricks-sonnet": f"Databricks / {DBX_MODEL_SONNET} (DBU cost)",
+            "databricks-opus":   f"Databricks / {DBX_MODEL_OPUS} (DBU cost)",
+        }.get(ACTIVE_MODEL, ACTIVE_MODEL)
+        await update.message.reply_text(
+            f"🤖 Current model: {model_label}\n\n"
+            "Switch with:\n"
+            "  /model groq                — Llama 3.3 70B (free)\n"
+            "  /model databricks-sonnet   — Claude Sonnet 4.6 (DBU)\n"
+            "  /model databricks-opus     — Claude Opus 4.6 (DBU)\n\n"
+            "Or build a mental model: /model <UPSC topic>"
+        )
+        return
+
+    if arg.lower() in _switch_map:
+        new_model = _switch_map[arg.lower()]
+        ACTIVE_MODEL = new_model
+        dbx_warn = ""
+        if new_model.startswith("databricks") and (not DATABRICKS_HOST or not DATABRICKS_TOKEN):
+            dbx_warn = "\n\n⚠️ Warning: DATABRICKS_HOST or DATABRICKS_TOKEN not set — calls will fail."
+        label = {
+            "groq": f"Groq / {GROQ_MODEL}",
+            "databricks-sonnet": f"Databricks / {DBX_MODEL_SONNET}",
+            "databricks-opus":   f"Databricks / {DBX_MODEL_OPUS}",
+        }[new_model]
+        log.info(f"Model switched to {new_model} by user")
+        await update.message.reply_text(f"✅ Model switched to: {label}{dbx_warn}")
+        return
+
+    # ── Mental model builder (original behaviour) ─────────────────
+    topic = arg
     await thinking(update, f"🔨 Building mental model: {topic}...")
     prompt = (
         f"MENTAL MODEL: {topic}\n\n"
@@ -2716,6 +2859,166 @@ async def cmd_eval_log(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ================================================================
+# INLINE KEYBOARD CALLBACK HANDLER (quiz/drill button answers)
+# ================================================================
+
+async def handle_quiz_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handle A/B/C/D button taps from InlineKeyboardMarkup."""
+    query = update.callback_query
+    await query.answer()  # acknowledge the tap immediately
+
+    if not check_auth(update):
+        return
+
+    data = query.data or ""
+    if not data.startswith("quiz_ans:"):
+        return
+
+    answer = data.split(":", 1)[1].upper()
+    if answer not in {"A", "B", "C", "D"}:
+        return
+
+    # Disable the keyboard so the user can't tap again
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    session = get_session(ctx)
+    if not session:
+        await query.message.reply_text("No active quiz session. Use /quiz to start.")
+        return
+
+    mode = session.get("mode")
+
+    if mode == "quiz":
+        topic   = session["data"].get("topic", "Prelims")
+        concept = session["data"].get("concept", topic)
+        key     = session["data"].get("answer_key", {})
+        attempts = int(session["data"].get("attempts", 0)) + 1
+        session["data"]["attempts"] = attempts
+        touch_session(ctx)
+
+        correct_option = str(key.get("correct_option", "")).upper()
+        is_correct = (answer == correct_option)
+
+        # Emoji reaction for instant feedback
+        await query.message.reply_text("✅ Correct!" if is_correct else "❌ Wrong!")
+
+        feedback = render_quiz_feedback(answer, key, is_correct)
+        _db_exec(
+            "INSERT INTO quiz_history(subject,question,user_answer,was_correct,score,topic) "
+            "VALUES(?,?,?,?,?,?)",
+            (topic, session["data"].get("question_text", "")[:1000], answer,
+             1 if is_correct else 0, 1.0 if is_correct else 0.0, concept)
+        )
+        if not is_correct:
+            log_weakness("Prelims", concept, "quiz")
+
+        mem = get_memory_context()
+        try:
+            followup_public, followup_key, tok, lat = await generate_quiz_with_key(
+                topic, mem, concept_hint=concept)
+            log_hermes("quiz_followup_btn", f"{concept}|{answer}", followup_public, tok, lat)
+        except Exception as e:
+            log.error(f"quiz button follow-up failed: {e}")
+            clear_session(ctx)
+            await query.message.reply_text(
+                feedback + "\n\n⚠️ Follow-up generation failed. Start again with /quiz.")
+            return
+
+        session["data"]["question_text"] = followup_public
+        session["data"]["answer_key"]    = followup_key
+        session["data"]["concept"]       = followup_key.get("concept", concept)
+        touch_session(ctx)
+
+        await query.message.reply_text(
+            feedback + "\n\nFOLLOW-UP:\n" + followup_public,
+            reply_markup=build_answer_keyboard()
+        )
+
+    elif mode == "drill":
+        # For drill: accumulate answers in session, grade when all 3 received
+        answers = session["data"].get("button_answers", {})
+        answered_count = len(answers)
+        next_q = answered_count + 1
+        if next_q > 3:
+            await query.message.reply_text("All 3 drill questions already answered.")
+            return
+
+        answers[next_q] = answer
+        session["data"]["button_answers"] = answers
+        touch_session(ctx)
+
+        if len(answers) < 3:
+            await query.message.reply_text(
+                f"✓ Q{next_q} answered: {answer}. Reply for Q{next_q + 1} or tap a button.",
+                reply_markup=build_answer_keyboard()
+            )
+        else:
+            # All 3 answers received — grade the drill
+            await query.message.reply_text("🧠 Grading drill...", reply_markup=None)
+            drill_keys = session["data"].get("drill_keys", [])
+            session["data"]["attempts"] = int(session["data"].get("attempts", 0)) + 1
+            touch_session(ctx)
+
+            total_correct = 0
+            result_blocks = []
+            incorrect_concepts = []
+
+            for qkey in drill_keys:
+                qno = qkey["qno"]
+                user_answer = answers.get(qno, "?")
+                correct_option = qkey["correct_option"]
+                is_correct_q = (user_answer == correct_option)
+                if is_correct_q:
+                    total_correct += 1
+                else:
+                    incorrect_concepts.append({"topic": qkey.get("topic", "Prelims"),
+                                               "concept": qkey.get("concept", "General")})
+                _db_exec(
+                    "INSERT INTO quiz_history(subject,question,user_answer,was_correct,score,topic) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (qkey.get("topic", "Prelims"),
+                     f"Drill Q{qno}: {session['data'].get('questions_text', '')[:900]}",
+                     user_answer, 1 if is_correct_q else 0,
+                     1.0 if is_correct_q else 0.0,
+                     qkey.get("concept", qkey.get("topic", "General")))
+                )
+                result_blocks.append(render_single_drill_result(qkey, user_answer, is_correct_q))
+                if not is_correct_q:
+                    log_weakness("Prelims", qkey.get("concept", qkey.get("topic", "General")), "drill")
+
+            summary = (f"🌪️ DRILL RESULT\n{DIVIDER}\nScore: {total_correct}/3\n\n"
+                       + "\n\n".join(result_blocks))
+
+            weakest_concept = incorrect_concepts[0]["concept"] if incorrect_concepts else None
+            if weakest_concept:
+                summary += f"\n\nWEAKEST CONCEPT TO REVISE NEXT:\n{weakest_concept}"
+                mem = get_memory_context()
+                try:
+                    followup_pub, followup_key, tok, lat = await generate_quiz_with_key(
+                        "Prelims", mem, concept_hint=weakest_concept)
+                    log_hermes("drill_followup_btn", weakest_concept, followup_pub, tok, lat)
+                    set_session(ctx, "quiz", {
+                        "topic": followup_key.get("topic", "Prelims"),
+                        "concept": followup_key.get("concept", weakest_concept),
+                        "question_text": followup_pub, "answer_key": followup_key,
+                        "attempts": 0, "started_at": datetime.utcnow().isoformat()
+                    })
+                    await query.message.reply_text(
+                        summary + "\n\nFOLLOW-UP MCQ ON YOUR WEAKEST CONCEPT:\n" + followup_pub,
+                        reply_markup=build_answer_keyboard()
+                    )
+                    return
+                except Exception as e:
+                    log.error(f"Drill button follow-up failed: {e}")
+
+            clear_session(ctx)
+            await query.message.reply_text(summary + "\n\n✅ Drill session complete.")
+
+
+# ================================================================
 # FREE TEXT HANDLER — the main differentiator
 # Just type anything. Hermes responds with full context.
 # ================================================================
@@ -2727,6 +3030,11 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_msg = update.message.text
     if not user_msg:
         return
+
+    # ── Session inactivity timeout check ─────────────────────────
+    if check_session_timeout(ctx):
+        await update.message.reply_text(SESSION_TIMEOUT_MSG)
+        # Fall through to handle as free-text (no active session)
 
     session = get_session(ctx)
 
@@ -2750,6 +3058,9 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         correct_option = str(key.get("correct_option", "")).upper()
         is_correct = (answer == correct_option)
+
+        # Emoji reaction for instant feedback before detailed explanation
+        await update.message.reply_text("✅ Correct!" if is_correct else "❌ Wrong!")
 
         feedback = render_quiz_feedback(answer, key, is_correct)
 
@@ -2785,7 +3096,10 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         session["data"]["concept"] = followup_key.get("concept", concept)
         touch_session(ctx)
 
-        await send_long(update, feedback + "\n\nFOLLOW-UP:\n" + followup_public)
+        await update.message.reply_text(
+            feedback + "\n\nFOLLOW-UP:\n" + followup_public,
+            reply_markup=build_answer_keyboard()
+        )
         return
 
     # ============================================================
@@ -3395,20 +3709,42 @@ async def cmd_mastery_update(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 def main():
     global groq_client
 
+    # ── Startup config validation ─────────────────────────────────
+    errors   = []
+    warnings = []
+
     if not BOT_TOKEN:
-        print("ERROR: Set HERMES_BOT_TOKEN"); return
+        errors.append("HERMES_BOT_TOKEN (or TELEGRAM_TOKEN) is not set")
     if not GROQ_API_KEY:
-        print("ERROR: Set GROQ_API_KEY — free at console.groq.com"); return
+        errors.append("GROQ_API_KEY is not set — free at console.groq.com")
     if not ALLOWED_USER_ID:
-        print("WARNING: TELEGRAM_USER_ID not set — bot open to everyone!")
+        warnings.append("TELEGRAM_USER_ID not set — bot is open to everyone!")
+    if not DATABRICKS_HOST:
+        warnings.append("DATABRICKS_HOST not set — Databricks models unavailable")
+    if not DATABRICKS_TOKEN:
+        warnings.append("DATABRICKS_TOKEN not set — Databricks models unavailable")
+
+    # Print startup banner
+    log.info("=" * 60)
+    log.info(f"  HERMES {HERMES_VERSION} — UPSC AIR-1 Mentor Bot")
+    log.info(f"  Groq backend  : {GROQ_MODEL}")
+    log.info(f"  DBX Sonnet    : {DBX_MODEL_SONNET}")
+    log.info(f"  DBX Opus      : {DBX_MODEL_OPUS}")
+    log.info(f"  Session TTL   : {SESSION_TTL_SECONDS // 60} min")
+    log.info(f"  DB path       : {DB_PATH}")
+    log.info(f"  Vault         : {VAULT_PATH} ({'✓' if VAULT_PATH.exists() else '✗ not found'})")
+    log.info(f"  Auth user     : {ALLOWED_USER_ID or 'OPEN (all users)!'}")
+    for w in warnings:
+        log.warning(f"  ⚠  {w}")
+    log.info("=" * 60)
+
+    if errors:
+        for err in errors:
+            log.error(f"STARTUP ERROR: {err}")
+        return
 
     groq_client = Groq(api_key=GROQ_API_KEY)
     init_db()
-
-    log.info(f"DB       : {DB_PATH}")
-    log.info(f"Vault    : {VAULT_PATH} ({'exists' if VAULT_PATH.exists() else 'not found'})")
-    log.info(f"Model    : {GROQ_MODEL}")
-    log.info(f"DBX Host : {DATABRICKS_HOST}")
 
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -3457,6 +3793,7 @@ def main():
 
     for name, handler in commands:
         app.add_handler(CommandHandler(name, handler))
+    app.add_handler(CallbackQueryHandler(handle_quiz_callback, pattern=r"^quiz_ans:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     def _shutdown(sig, frame):
@@ -3466,7 +3803,7 @@ def main():
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT,  _shutdown)
 
-    log.info(f"🧠 HERMES FULL — {len(commands)} commands — Groq/{GROQ_MODEL} — $0/month")
+    log.info(f"🧠 HERMES {HERMES_VERSION} — {len(commands)} commands — polling started")
     app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 

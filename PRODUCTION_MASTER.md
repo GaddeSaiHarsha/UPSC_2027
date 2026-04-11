@@ -1,5 +1,5 @@
 # UPSC 2027 AI System — Production Master Guide
-> **Last updated:** 2026-04-09 | **Status:** Production-Ready ✅
+> **Last updated:** 2026-04-11 | **Status:** Production-Ready ✅
 > **Target:** UPSC CSE 2027 (Prelims May 2027 · Mains Sep 2027) | Telugu Optional (500 marks)
 
 ---
@@ -13,7 +13,7 @@
 | Databricks Cloud | Knowledge Base (80,800 chunks) | `upsc_catalog.rag.*` | ✅ Live |
 | Databricks Cloud | Vector Search | `upsc_catalog.rag.upsc_knowledge_index` | ✅ Live |
 | Databricks Cloud | Knowledge Graph | `kg_entities` + `kg_relationships` | ✅ Live |
-| Telegram Bot | Hermes V1.8 mentor bot | `bot_code/hermes_full.py` | ✅ Built |
+| Telegram Bot | Hermes V2.0 mentor bot | `bot_code/hermes_full.py` | ✅ Built |
 | Mac | Obsidian vault (syncs 8:15 AM) | `~/Desktop/UPSC_2026` | ✅ Auto-sync |
 | Mac | Obsidian Copilot | Plugin: Copilot by Logan Yang | ⬜ Install once |
 | Claude Code | MCP Study Tools (6 tools) | `.claude/settings.local.json` | ✅ Configured |
@@ -154,7 +154,17 @@ Embeddings:        Qwen3 0.6B (1024-dim)
 
 ---
 
-## PART 3 — HERMES BOT V1.8 — COMPLETE COMMAND REFERENCE
+## PART 3 — HERMES BOT V2.0 — COMPLETE COMMAND REFERENCE
+
+### V2.0 New Features
+| Feature | Description |
+|---|---|
+| **Inline Keyboard Buttons** | Tap A/B/C/D in quiz and drill — no more typing answers |
+| **Session Auto-Timeout** | Sessions auto-cancel after 15 min inactivity with notification |
+| **Emoji Reactions** | ✅/❌ instant feedback before detailed explanation |
+| **Live Model Switching** | `/model groq\|databricks-sonnet\|databricks-opus` — switch LLM mid-session |
+| **Structured Logging** | `logging` module (not print). Set `HERMES_DEBUG=1` for DEBUG level |
+| **Startup Banner** | Config validation on boot — missing tokens → clear error before crash |
 
 ### Stateful Commands (session persists until /cancel or completion)
 
@@ -489,8 +499,16 @@ WEEKLY (Sunday evening):
 ```
 UPSC_2027/
 ├── .claude/
-│   ├── CLAUDE.md              ← AI context (updated 2026-04-09)
+│   ├── CLAUDE.md              ← AI context (updated 2026-04-11)
 │   └── settings.local.json    ← MCP server config (both servers wired)
+│   [Cleaned 2026-04-11: removed junk files from PR #14 accident]
+│
+├── notebooks/
+│   ├── NB6_CA_Orchestrator.py      ← 7 AM CA pipeline
+│   ├── NB7_Daily_CA_Practice.py    ← 8 AM practice generator (6 modes)
+│   ├── NB8_Audio_Generator.py      ← 8:30 AM podcast/audio
+│   ├── NB9_Backup_Sync.py          ← 9 AM GitHub backup
+│   └── sonnet_superpowers_demo.py  ← Claude Sonnet 4.6 UPSC demos (moved from .claude/)
 │
 ├── 07_Sync/
 │   ├── sync_config.json       ← ALL config (warehouse 589dccbdf8c6e4c9 locked in)
@@ -502,7 +520,7 @@ UPSC_2027/
 │   └── setup_git.sh           ← Git remote setup (one-time)
 │
 ├── bot_code/
-│   └── hermes_full.py         ← Hermes V1.8 (3,498 lines, all stateful commands)
+│   └── hermes_full.py         ← Hermes V2.0 (inline buttons, auto-timeout, model switching)
 │
 ├── PRODUCTION_MASTER.md       ← THIS FILE — complete system documentation
 ├── DEPLOYMENT_GUIDE.md        ← V1.8 deployment + smoke tests
